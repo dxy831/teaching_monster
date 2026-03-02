@@ -73,4 +73,4 @@ htmlcov/
 
 # Ignore runtime logs
 logs/
-*.log
+*.logsrc/api_config.json
