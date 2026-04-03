@@ -6,6 +6,7 @@ from .user_profile import UserProfile, get_default_profile
 def get_prompt3_code(
     regenerate_note: str,
     section,
+    section_steps,
     base_class: str,
     user_profile: Optional[UserProfile] = None,
     estimated_duration: Optional[int] = None
@@ -16,6 +17,7 @@ def get_prompt3_code(
     Args:
         regenerate_note: 重新生成的注意事项
         section: 章节信息对象
+        section_steps: 音频步骤侧车数据
         base_class: 基类代码
         user_profile: 用户配置，可选
         estimated_duration: 该章节的预计时长（秒），可选
@@ -30,6 +32,7 @@ def get_prompt3_code(
     # 获取 AI 智能生成的用户画像提示词
     profile_prompt = user_profile.get_stage3_prompt()
     target_language = user_profile.get_language()
+    total_audio_duration = sum(step.get("audio_duration", 0) for step in section_steps)
     
     # 生成时长指导说明
     duration_guidance = ""
@@ -38,13 +41,14 @@ def get_prompt3_code(
     ### 时长控制要求
     - **目标时长**: 本章节预计时长为 **{estimated_duration} 秒**
     - **节奏分配建议**:
-        - 每句旁白约 3-5 秒（共 {len(section.lecture_lines)} 句，约 {len(section.lecture_lines) * 4} 秒）
-        - 剩余 {max(0, estimated_duration - len(section.lecture_lines) * 4)} 秒用于动画演示和停顿
+        - 已给定音频真值总时长约 **{total_audio_duration:.2f} 秒**
+        - 每条 narration 的持续时间必须严格等于对应 step 的 `audio_duration`
+        - 剩余 {max(0, estimated_duration - total_audio_duration):.2f} 秒才允许用于 narration 之间的额外停顿或章节收尾
     - **wait() 使用指南**:
-        - 简单动画后：`self.wait(0.5)` 到 `self.wait(1)`
-        - 重要概念展示后：`self.wait(1.5)` 到 `self.wait(2)`
-        - 章节结束前：`self.wait(2)` 到 `self.wait(3)`
-    - **⚠️ 必须严格遵守**: 确保动画总时长接近目标时长 **{estimated_duration} 秒**，严禁过短！
+        - narration 段内部严禁用 `self.wait()` 代替 `audio_duration`
+        - narration 之间允许极短停顿：`self.wait(0.2)` 到 `self.wait(0.8)`
+        - 章节结束前允许 `self.wait(1)` 到 `self.wait(2)`
+    - **⚠️ 必须严格遵守**: narration 时间轴以 `audio_duration` 为唯一真理，严禁自行压缩！
 """
     
     return f"""
@@ -280,6 +284,32 @@ def get_prompt3_code(
             title = Text("标题", ...)  # 背景是黑色！
     ```
 
+    ### 规则 6：旁白步骤必须使用 play_synced_step()
+
+    **每一条 narration 都必须调用 `self.play_synced_step(...)`。**
+    它内部会播放音频、保持对应短句高亮，并让右侧动画与音频并行运行。
+
+    ```python
+    # ✅ 正确：使用音频真实时长作为 narration 唯一时间真值
+    self.play_synced_step(
+        0,
+        steps[0]["audio_path"],
+        steps[0]["audio_duration"],
+        Create(array_group)
+    )
+
+    # ❌ 错误：手动 add_sound + wait，或自行编写 narration 时长
+    self.add_sound(steps[0]["audio_path"])
+    self.wait(3)  # ❌ 严禁手写 narration 时长
+    ```
+
+    **注意：**
+    - `steps[i]["spoken_script"]` 只用于离线 TTS，不允许显示在画面上
+    - 画面上只能显示 `steps[i]["screen_text"]`
+    - narration 段内部如需右侧动画，必须作为 `play_synced_step(..., *animations)` 的并行动画传入
+    - narration 段内部严禁为了对齐语音而额外写 `self.wait(x)`
+    - 如果当前 batch 的 `screen_texts` 不够覆盖后续 narration，必须先调用 `self.replace_lecture_lines(next_batch_lines)` 再继续
+
     ---
 
     ### 核心任务：通用算法可视化
@@ -406,21 +436,21 @@ def algo(data):
     - **逻辑外显化**: 条件判断显示 `MathTex("5 > 3")`，成立变绿/不成立变红
     - **递归**: 在屏幕一角维护 Stack VGroup，每层递归 add 矩形，返回时 remove
 
-    ### 🔴 规则 6：讲解文字必须"讲到变色，讲完恢复" 🔴
+    ### 🔴 规则 6.1：讲解文字必须通过音频步骤自动高亮 🔴
     
-    **每一句讲解文字都必须：讲到时变色 → 讲完后恢复原色 `#2C1608`。严禁跳过任何一句！**
-    注意：一句可能拆分为多行，则多行一起变色和恢复原色！
-    
-    基类提供两种方式，按需选用：
+    **每一句讲解文字都必须通过 `play_synced_step()` 完成：**
+    - 音频开始播放时，对应短句开始高亮
+    - 高亮持续整个 `audio_duration`
+    - narration 结束后恢复原色 `#2C1608`
+    - 严禁跳过任何一句
+
     ```python
-    # 方式A：简单高亮，无需在高亮期间播放其他动画
-    self.speak_and_highlight(0, "#C35101")              # 变色→等1.5秒→自动恢复
-    self.speak_and_highlight(1, "#1A7F99", wait_time=2) # 可自定义等待时长
-    
-    # 方式B：高亮期间需要播放右侧动画时，手动配对
-    self.play(self.highlight_lecture_line(0, "#C35101"))  # 变色
-    self.play(Create(some_right_side_obj))                # 播放动画
-    self.play(self.unhighlight_lecture_line(0))            # 必须恢复！
+    self.play_synced_step(
+        0,
+        steps[0]["audio_path"],
+        steps[0]["audio_duration"],
+        FadeIn(some_right_side_obj)
+    )
     ```
 
     ### 🔴 规则 7：方块+文字标签的正确组合方式（严禁 arrange 分离！）🔴
@@ -458,7 +488,8 @@ def algo(data):
 
     ### 任务输入
     - 标题: {section.title}
-    - 脚本: {section.lecture_lines}
+    - 屏幕短句: {[step["screen_text"] for step in section_steps]}
+    - 音频步骤数据: {section_steps}
     - 动画指令: {section.animations}
 
     ### 代码规范
@@ -473,12 +504,13 @@ def algo(data):
 
     class {section.id.title().replace('_', '')}Scene(TeachingScene):
         def construct(self):
+            steps = {section_steps}
+            current_batch = steps[:4]
+            screen_texts = [step["screen_text"] for step in current_batch]
+
             # 🔴🔴🔴 第一行必须调用 setup_layout()！设置背景色和基础布局 🔴🔴🔴
-            self.setup_layout("{section.title}", {section.lecture_lines[:4]})
-            
-            # 🔴 讲到第1行讲解文字时高亮，播放对应动画，然后恢复
-            self.play(self.highlight_lecture_line(0, "#C35101"))  # 第1行变色
-            
+            self.setup_layout("{section.title}", screen_texts)
+
             # 1. 创建代码块 - 🔴 必须使用 self.create_code_block()！
             code_raw = \"\"\"# {target_language} 示例
 def algo(data):
@@ -486,34 +518,57 @@ def algo(data):
     pass\"\"\"
             code = self.create_code_block(code_raw, language="{target_language.lower()}")
             code.to_edge(DOWN, buff=0.3).to_edge(LEFT, buff=0.3)
-            self.play(Create(code))
-            self.wait(0.5)
-            self.play(self.unhighlight_lecture_line(0))  # 第1行恢复原色
-            
-            # 🔴 讲到第2行讲解文字时高亮
-            self.play(self.highlight_lecture_line(1, "#1A7F99"))  # 第2行变色
-            
+
             # 2. Data Structures
             array_group = VGroup(*[Square() for _ in range(5)]).arrange(RIGHT)
             
             # 3. 勾叉标记 - 🔴 必须用 MathTex，严禁用 Text！
             correct_mark = MathTex(r"\\checkmark", color="#478211").scale(1.2)  # 绿色勾 ✓
             wrong_mark = MathTex(r"\\times", color="#C84A2B").scale(1.2)        # 红色叉 ✗
-            
-            self.wait(0.5)
-            self.play(self.unhighlight_lecture_line(1))  # 第2行恢复原色
-            
-            # 🔴 讲到第3行时用简便方法（高亮→等待→自动恢复）
-            self.speak_and_highlight(2, "#478211", wait_time=2)
+
+            # 🔴 narration 必须使用 play_synced_step，以音频真实时长为准
+            self.play_synced_step(
+                0,
+                steps[0]["audio_path"],
+                steps[0]["audio_duration"],
+                Create(code)
+            )
+
+            self.play_synced_step(
+                1,
+                steps[1]["audio_path"],
+                steps[1]["audio_duration"],
+                Create(array_group)
+            )
             
             # 4. Execution Trace
             code_lines = code[2]
             highlight = SurroundingRectangle(code_lines[0], color=YELLOW, buff=0.05)
-            self.play(Create(highlight))
+            self.play_synced_step(
+                2,
+                steps[2]["audio_path"],
+                steps[2]["audio_duration"],
+                Create(highlight)
+            )
             
             # 移动高亮
             new_hl = SurroundingRectangle(code_lines[1], color=YELLOW, buff=0.05)
-            self.play(Transform(highlight, new_hl))
+            self.play_synced_step(
+                3,
+                steps[3]["audio_path"],
+                steps[3]["audio_duration"],
+                Transform(highlight, new_hl)
+            )
+
+            # 如果 narration 超过当前批次，必须先切换左侧讲解文字，再继续高亮
+            if len(steps) > 4:
+                next_batch = steps[4:8]
+                self.replace_lecture_lines([step["screen_text"] for step in next_batch])
+                self.play_synced_step(
+                    0,
+                    next_batch[0]["audio_path"],
+                    next_batch[0]["audio_duration"]
+                )
             
             self.wait(2)
     ```
@@ -654,8 +709,8 @@ def algo(data):
     **完整自检步骤（必须全部执行）：**
     1. 搜索所有 `Text(` 调用，检查内容是否包含 ✓✗×√ 或数学符号 → 必须改为 MathTex，否则运行必定失败！
     2. 专项检查所有讲解行：若行文本含 `O(`/`log`/`²`/`₂`/`ₙ`/`^`/`=`/`≤`/`≥`/`✓`/`✗`，禁止整句 `Text(line, ...)`，必须改为 Text + MathTex 混排（重点检查 `log₂n`）
-    3. 检查每一行讲解文字是否都有 `highlight_lecture_line` / `speak_and_highlight` 调用
-    4. 检查每个 `highlight_lecture_line` 是否都有对应的 `unhighlight_lecture_line`（必须成对出现！）
+    3. 检查每一条 narration 是否都调用了 `play_synced_step`
+    4. 检查 narration 段内部是否错误地写了手动 `self.wait(x)` 来代替 `audio_duration`
     5. 检查每行讲解文字是否超过20个中文字符，超过则拆行（不超过20字的短句不要强行拆开）
     6. 检查讲解文字分批是否按语义切分，不同知识点不能混在同一批
     7. 检查右侧是否出现“**大型图案 + 右侧文字标注并存**”的情况；若出现，必须删除右侧文字或先切换场景后再显示

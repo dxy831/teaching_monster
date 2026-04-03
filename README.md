@@ -415,35 +415,31 @@ curl http://localhost:8080/health
 
 ```json
 {
+  "api_key": "sk-xxxxx",
   "claude": {
     "base_url": "https://api.anthropic.com/v1",
     "api_version": "",
-    "api_key": "sk-ant-xxxxx",
     "model": "claude-opus-4-5-20251101-cc"
   },
   "gpt4o": {
     "base_url": "https://api.openai.com/v1",
     "api_version": "2024-03-01-preview",
-    "api_key": "sk-xxxxx",
     "model": "gpt-4o"
   },
   "gpt-41": {
     "base_url": "https://api.openai.com/v1",
     "api_version": "2024-03-01-preview",
-    "api_key": "sk-xxxxx",
     "model": "gpt-4o"
   },
   "gpt5": {
     "base_url": "https://api.openai.com/v1",
     "api_version": "",
-    "api_key": "sk-xxxxx",
-    "model": "gpt-5"
+    "model": "gpt-5.4"
   },
   "gemini": {
     "base_url": "https://generativelanguage.googleapis.com/v1",
     "api_version": "",
-    "api_key": "xxxxx",
-    "model": "gemini-2.5-pro"
+    "model": "gemini-3.1-pro-preview"
   },
   "iconfinder": {
     "api_key": "YOUR_ICONFINDER_KEY"

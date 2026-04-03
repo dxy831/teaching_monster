@@ -9,6 +9,11 @@ class TeachingScene(Scene):
     RIGHT_MAX_WIDTH = 6.0
     RIGHT_MAX_HEIGHT = 5.5
 
+    def _build_lecture_group(self, lecture_lines):
+        lecture_texts = [Text(line, font="Noto Sans SC", font_size=20, color="#2C1608") for line in lecture_lines]
+        lecture_group = VGroup(*lecture_texts).arrange(DOWN, aligned_edge=LEFT, buff=0.3)
+        return lecture_group
+
     def setup_layout(self, title_text, lecture_lines):
         # BASE - 温暖配色方案
         self.camera.background_color = "#FFFDF4"  # 温暖米白色背景
@@ -20,10 +25,10 @@ class TeachingScene(Scene):
 
         # Left-side lecture content (bullets with "-")
         # ⚠️ 讲解文字从左上角开始，严禁Y轴居中
-        lecture_texts = [Text(line, font="Noto Sans SC", font_size=20, color="#2C1608") for line in lecture_lines]  # 深棕色普通文字，font_size=20
-        self.lecture = VGroup(*lecture_texts).arrange(DOWN, aligned_edge=LEFT)
+        self.lecture = self._build_lecture_group(lecture_lines)
         self.lecture.next_to(self.title, DOWN, buff=1.0).to_edge(LEFT, buff=0.3)
         self.add(self.lecture)
+        self.lecture_anchor = self.lecture.get_corner(UL)
 
         # Define fine-grained animation grid (6x6 grid on right side)
         self.grid = {}
@@ -124,6 +129,55 @@ class TeachingScene(Scene):
             self.play(self.lecture[index].animate.set_color(color))
             self.wait(wait_time)
             self.play(self.lecture[index].animate.set_color("#2C1608"))
+
+    def play_synced_step(
+        self,
+        line_index,
+        audio_path,
+        audio_duration,
+        *animations,
+        highlight_color="#C35101",
+        reset_color="#2C1608",
+    ):
+        \"\"\"
+        V5.0 核心同步原语：
+        - 使用 add_sound 播放音频
+        - 在整个音频时长内保持左侧对应短句高亮
+        - 允许右侧动画与音频并行运行
+
+        Args:
+            line_index: 左侧讲解文字索引
+            audio_path: 音频绝对路径
+            audio_duration: 音频真实物理时长（秒）
+            *animations: 需要与音频并行执行的动画
+            highlight_color: 高亮颜色
+            reset_color: 恢复颜色
+        \"\"\"
+        if not (0 <= line_index < len(self.lecture)):
+            raise IndexError(f"Invalid lecture line index: {line_index}")
+        if audio_duration <= 0:
+            raise ValueError(f"audio_duration must be positive, got {audio_duration}")
+
+        self.lecture[line_index].set_color(highlight_color)
+        self.add_sound(audio_path)
+
+        if animations:
+            self.play(*animations, run_time=audio_duration)
+        else:
+            self.wait(audio_duration)
+
+        self.lecture[line_index].set_color(reset_color)
+
+    def replace_lecture_lines(self, lecture_lines):
+        \"\"\"
+        将左侧讲解文字整体切换为新的一批，并保持左上锚点不变。
+        用于 steps 数量较多时的分批显示。
+        \"\"\"
+        new_lecture = self._build_lecture_group(lecture_lines)
+        new_lecture.align_to(self.lecture_anchor, UL)
+        self.play(FadeOut(self.lecture), FadeIn(new_lecture))
+        self.remove(self.lecture)
+        self.lecture = new_lecture
 
     def place_in_area(self, mobject, top_left, bottom_right, scale_factor=1.0):
         \"\"\"将元素放置到网格区域中心，并自动边界裁剪。\"\"\"

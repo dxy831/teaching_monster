@@ -17,7 +17,20 @@ with _CFG_PATH.open("r", encoding="utf-8") as _f:
 
 
 def cfg(svc: str, key: str, default=None):
-    return os.getenv(f"{svc}_{key}".upper(), _CFG.get(svc, {}).get(key, default))
+    env_value = os.getenv(f"{svc}_{key}".upper())
+    if env_value is not None:
+        return env_value
+
+    if key == "api_key" and svc != "iconfinder":
+        shared_env_value = os.getenv("OPENAI_API_KEY")
+        if shared_env_value is not None:
+            return shared_env_value
+
+        shared_cfg_value = _CFG.get("api_key")
+        if shared_cfg_value is not None:
+            return shared_cfg_value
+
+    return _CFG.get(svc, {}).get(key, default)
 
 
 def generate_log_id():

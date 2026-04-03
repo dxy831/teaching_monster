@@ -21,6 +21,7 @@ if FFMPEG_DIR not in os.environ["PATH"]:
     os.environ["PATH"] = FFMPEG_DIR + os.pathsep + os.environ["PATH"]
 
 import re
+import ast
 import argparse
 import json
 import time
@@ -39,6 +40,12 @@ from prompts.user_profile import UserProfile, get_default_profile, create_profil
 from src.utils import *
 from src.scope_refine import *
 from src.external_assets import process_storyboard_with_assets
+from src.audio_steps import (
+    build_section_steps,
+    save_section_steps,
+    build_section_narration_track,
+    remux_video_with_audio,
+)
 
 
 @dataclass
@@ -154,6 +161,7 @@ class TeachingVideoAgent:
         self.enhanced_storyboard = None
         self.sections = []
         self.section_codes = {}
+        self.section_steps = {}
         self.section_videos = {}
         self.video_feedbacks = {}
 
@@ -179,9 +187,98 @@ class TeachingVideoAgent:
             self.token_usage["total_tokens"] += usage.get("total_tokens", 0)
         return response
 
+    def _video_has_audio_stream(self, video_path: Path) -> bool:
+        video_path = Path(video_path)
+        ffprobe_path = shutil.which("ffprobe")
+        if not ffprobe_path or not video_path.exists():
+            return False
+
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=index",
+                "-of",
+                "json",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return False
+
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return False
+
+        return bool(payload.get("streams"))
+
+    def _remux_section_audio(self, section_id: str, video_path: Path) -> Path:
+        steps_file = self.output_dir / f"{section_id}_steps.json"
+        code_file = self.output_dir / f"{section_id}.py"
+        if not steps_file.exists() or not code_file.exists():
+            raise FileNotFoundError(f"Missing steps/code file for remux: {section_id}")
+
+        if section_id in self.section_steps:
+            section_steps = self.section_steps[section_id]
+        else:
+            with open(steps_file, "r", encoding="utf-8") as f:
+                section_steps = json.load(f)
+            self.section_steps[section_id] = section_steps
+
+        remux_dir = self.output_dir / "audio_remux"
+        remux_dir.mkdir(exist_ok=True)
+        narration_path = remux_dir / f"{section_id}_track.wav"
+        fixed_video_path = remux_dir / f"{section_id}_with_audio.mp4"
+
+        build_section_narration_track(section_steps, code_file, narration_path)
+        remux_video_with_audio(video_path, narration_path, fixed_video_path)
+        return fixed_video_path
+
     def get_serializable_state(self):
         """返回可以序列化保存的Agent状态"""
         return {"idx": self.idx, "knowledge_point": self.learning_topic, "folder": self.folder, "cfg": self.cfg}
+
+    def _validate_synced_step_coverage(self, code: str, expected_steps: int) -> Tuple[bool, str]:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as exc:
+            return False, f"SyntaxError during AST validation: {exc}"
+
+        construct_func = None
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name != "TeachingScene":
+                for child in node.body:
+                    if isinstance(child, ast.FunctionDef) and child.name == "construct":
+                        construct_func = child
+                        break
+            if construct_func:
+                break
+
+        if construct_func is None:
+            return False, "No construct() method found in generated scene code"
+
+        synced_calls = 0
+        raw_add_sound_calls = 0
+        for node in ast.walk(construct_func):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "play_synced_step":
+                    synced_calls += 1
+                elif node.func.attr == "add_sound":
+                    raw_add_sound_calls += 1
+
+        if raw_add_sound_calls > 0:
+            return False, "construct() contains raw add_sound() calls instead of play_synced_step()"
+        if synced_calls < expected_steps:
+            return False, f"construct() only calls play_synced_step() {synced_calls} times, expected {expected_steps}"
+
+        return True, ""
 
     def generate_outline(self) -> TeachingOutline:
         outline_file = self.output_dir / "outline.json"
@@ -360,9 +457,24 @@ class TeachingVideoAgent:
             error_message: 上次运行失败的错误信息（运行失败时）
         """
         code_file = self.output_dir / f"{section.id}.py"
+        steps_file = self.output_dir / f"{section.id}_steps.json"
+        audio_dir = self.output_dir / "audio" / section.id
+        audio_files_exist = audio_dir.exists() and any(
+            file_path.is_file()
+            for pattern in ("*.wav", "*.mp3", "*.ogg")
+            for file_path in audio_dir.glob(pattern)
+        )
 
-        if attempt == 1 and code_file.exists() and not feedback_improvements:
+        if (
+            attempt == 1
+            and code_file.exists()
+            and not feedback_improvements
+            and steps_file.exists()
+            and audio_files_exist
+        ):
             print(f"📂 发现 {section.id} 的现有代码，正在读取...")
+            with open(steps_file, "r", encoding="utf-8") as f:
+                self.section_steps[section.id] = json.load(f)
             with open(code_file, "r", encoding="utf-8") as f:
                 code = f.read()
                 self.section_codes[section.id] = code
@@ -396,9 +508,11 @@ class TeachingVideoAgent:
                 )
 
         else:
+            section_steps = self.prepare_section_steps(section)
             code_gen_prompt = get_prompt3_code(
                 regenerate_note=regenerate_note, 
                 section=section, 
+                section_steps=section_steps,
                 base_class=base_class,
                 user_profile=self.user_profile,
                 estimated_duration=section.estimated_duration  # 传递预计时长
@@ -425,11 +539,45 @@ class TeachingVideoAgent:
         code = replace_base_class(code, base_class)
         code = fix_png_path(code, self.assets_dir)
 
+        if not feedback_improvements:
+            is_valid, validation_error = self._validate_synced_step_coverage(code, len(section_steps))
+            if not is_valid:
+                if attempt < self.max_regenerate_tries:
+                    print(f"⚠️ {section.id} 代码未覆盖全部音频步骤，重新生成: {validation_error}")
+                    return self.generate_section_code(
+                        section=section,
+                        attempt=attempt + 1,
+                        error_message=validation_error,
+                    )
+                raise ValueError(validation_error)
+
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(code)
 
         self.section_codes[section.id] = code
         return code
+
+    def prepare_section_steps(self, section: Section) -> List[dict]:
+        steps_file = self.output_dir / f"{section.id}_steps.json"
+        audio_dir = self.output_dir / "audio" / section.id
+        if (
+            steps_file.exists()
+            and audio_dir.exists()
+            and any(file_path.is_file() for file_path in audio_dir.glob("*.wav"))
+        ):
+            with open(steps_file, "r", encoding="utf-8") as f:
+                section_steps = json.load(f)
+            self.section_steps[section.id] = section_steps
+            return section_steps
+
+        section_steps = build_section_steps(
+            section=section,
+            output_root=self.output_dir,
+            api_func=self._request_api_and_track_tokens,
+        )
+        save_section_steps(section_steps, steps_file)
+        self.section_steps[section.id] = section_steps
+        return section_steps
 
     def debug_and_fix_code(self, section_id: str, max_fix_attempts: int = 3) -> Tuple[bool, Optional[str]]:
         """Enhanced debug and fix code method
@@ -476,9 +624,20 @@ class TeachingVideoAgent:
         ]
         for video_path in video_patterns_check:
             if video_path.exists():
-                self.section_videos[section_id] = str(video_path)
-                print(f"✅ {self.learning_topic} {section_id} 发现已有视频，跳过渲染: {video_path}")
-                return True, None  # 成功，无错误
+                if self._video_has_audio_stream(video_path):
+                    try:
+                        fixed_video_path = self._remux_section_audio(section_id, video_path)
+                    except Exception as remux_error:
+                        print(f"⚠️ {self.learning_topic} {section_id} 已有视频回灌失败，将重新渲染: {remux_error}")
+                        break
+
+                    if self._video_has_audio_stream(fixed_video_path):
+                        self.section_videos[section_id] = str(fixed_video_path)
+                        print(f"✅ {self.learning_topic} {section_id} 发现已有视频，回灌后跳过渲染: {fixed_video_path}")
+                        return True, None  # 成功，无错误
+                    print(f"⚠️ {self.learning_topic} {section_id} 已有视频回灌后仍无音轨，重新渲染: {fixed_video_path}")
+                    break
+                print(f"⚠️ {self.learning_topic} {section_id} 已有视频缺少音轨，重新渲染: {video_path}")
 
         for fix_attempt in range(max_fix_attempts):
             print(f"🔧 {self.learning_topic} 正在调试 {section_id} (尝试 {fix_attempt + 1}/{max_fix_attempts})")
@@ -501,7 +660,19 @@ class TeachingVideoAgent:
 
                     for video_path in video_patterns:
                         if video_path.exists():
-                            self.section_videos[section_id] = str(video_path)
+                            try:
+                                fixed_video_path = self._remux_section_audio(section_id, video_path)
+                            except Exception as remux_error:
+                                last_error = f"Audio remux failed: {remux_error}"
+                                print(f"❌ {self.learning_topic} {section_id} 音频回灌失败: {remux_error}")
+                                break
+
+                            if not self._video_has_audio_stream(fixed_video_path):
+                                last_error = f"Rendered video has no audio stream after remux: {fixed_video_path}"
+                                print(f"❌ {self.learning_topic} {section_id} 回灌后仍无音轨: {fixed_video_path}")
+                                break
+
+                            self.section_videos[section_id] = str(fixed_video_path)
                             print(f"✅ {self.learning_topic} {section_id} 完成")
                             return True, None  # 成功，无错误
                 
@@ -881,7 +1052,10 @@ class TeachingVideoAgent:
             )
 
             if result.returncode == 0:
-                return str(output_path)
+                if self._video_has_audio_stream(output_path):
+                    return str(output_path)
+                print(f"❌ 合并结果缺少音轨: {output_path}")
+                return None
             else:
                 print(f"❌ 合并分节视频失败: {result.stderr}")
                 return None

@@ -6,6 +6,7 @@ import os
 import json
 import hashlib
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -150,6 +151,30 @@ def get_video_duration(file_path: str) -> Optional[float]:
     Returns:
         视频时长，如果无法获取则返回 None
     """
+    ffprobe_path = shutil.which("ffprobe")
+    if ffprobe_path:
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe_path,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=nw=1:nk=1",
+                    file_path,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                output = (result.stdout or "").strip()
+                if output:
+                    return float(output)
+        except Exception:
+            pass
+
     try:
         from moviepy.editor import VideoFileClip
         with VideoFileClip(file_path) as clip:
