@@ -9,116 +9,120 @@ def get_prompt2_storyboard(
     user_profile: Optional[UserProfile] = None
 ):
     """
-    生成分镜脚本的提示词
-    
+    Generate storyboard script prompt
+
     Args:
-        outline: 大纲JSON字符串
-        reference_image_path: 参考图片路径（可选）
-        user_profile: 用户配置，可选
-    
+        outline: Outline JSON string
+        reference_image_path: Reference image path (optional)
+        user_profile: User configuration, optional
+
     Returns:
-        完整的提示词字符串
+        Complete prompt string
     """
-    # 如果没有提供用户配置，使用默认配置
+    # Use default profile if none provided
     if user_profile is None:
         user_profile = get_default_profile()
-    
-    # 获取 AI 智能生成的用户画像提示词
+
+    # Get AI-generated user profile prompt
     profile_prompt = user_profile.get_stage2_prompt()
     target_language = user_profile.get_language()
-    
-    base_prompt = f""" 
-    你是一位**硬核算法可视化导演**。请将大纲转化为详细的 Manim 动画脚本。
+
+    base_prompt = f"""
+    **CRITICAL: All output content (titles, lecture_lines, animations) MUST be in English.**
+
+    You are a **Hardcore Algorithm Visualization Director**. Please convert the outline into a detailed Manim animation script.
 
     {profile_prompt}
 
-    # 通用视觉映射系统 (Universal Visual Mapping System)
+    # Universal Visual Mapping System
 
-    1.  **多维布局策略 (Layout Strategy)**:
-        - **智能布局分流 (Smart Layout Branching)**:
-          - **Case A: 纯理论/无代码 (No Code)** -> 保持现状：**左右对半布局**。左侧放讲解文字，右侧放可视化动画。
-          - **Case B: 代码演示场景 (With Code - DEFAULT for Algorithms)** -> **采用 "左侧分割 + 右侧全屏" 布局 (Split-Left Layout)**:
-            - **规则**: 凡是讲解算法具体步骤（循环、判断、交换、递归）的章节，**必须**使用此模式展示代码片段。严禁只在最后才展示代码。
-            - **左上区域 (Top-Left, ~30% height)**: 放置讲解文字 (Lecture Notes)。
-            - **左下区域 (Bottom-Left, ~70% height)**: 放置 **{target_language}** 代码片段 (Code Snippet)。
-            - **右侧区域 (Right Half, 100% height)**: 放置核心可视化/动画 (Main Visual)。
-          - **Case C: 完整代码/纯代码 (Full Code - FINAL SECTION ONLY)**:
-            - **规则**: 最后一个章节专门展示完整 **{target_language}** 源码。
-            - **布局**: **隐藏左侧文字** (Lecture Notes opacity=0)，将代码对象放大并居中 (`scale(0.8).move_to(ORIGIN)`)。
-            - **分页**: 如果代码超过 20 行，必须拆分为连续的子场景 (Sub-scenes, e.g., `Scene 12.1`, `Scene 12.2`)。
+    1.  **Multi-dimensional Layout Strategy**:
+        - **Smart Layout Branching**:
+          - **Case A: Pure Theory/No Code** -> Maintain current state: **Left-Right Split Layout**. Left side for lecture text, right side for visualization animations.
+          - **Case B: Code Demonstration Scenario (With Code - DEFAULT for Algorithms)** -> **Use "Split-Left Layout"**:
+            - **Rule**: For any section explaining specific algorithm steps (loops, conditionals, swaps, recursion), **must** use this mode to display code snippets. Strictly forbidden to only show code at the end.
+            - **Top-Left Area (~30% height)**: Place lecture text (Lecture Notes).
+            - **Bottom-Left Area (~70% height)**: Place **{target_language}** code snippet (Code Snippet).
+            - **Right Area (Right Half, 100% height)**: Place core visualization/animation (Main Visual).
+          - **Case C: Full Code/Pure Code (Full Code - FINAL SECTION ONLY)**:
+            - **Rule**: The last section specifically displays complete **{target_language}** source code.
+            - **Layout**: **Hide left text** (Lecture Notes opacity=0), enlarge and center code object (`scale(0.8).move_to(ORIGIN)`).
+            - **Pagination**: If code exceeds 20 lines, must split into consecutive sub-scenes (e.g., `Scene 12.1`, `Scene 12.2`).
 
-                - **强制分页规则 (Pagination Protocol)**:
-                    - **讲解文字逐行限制（硬性）**: 每行讲解文字不超过 **20个中文字符**（含标点、英文字母、数字）即可放一行；只有超过 20 字时才按语义拆分。**禁止把 20 字以内的完整短句强行拆成两行。**
-                    - **讲解文字分批规则（硬性，必须按顺序执行）**:
-                        1) **先判断是否有代码块**：
-                             - 有代码块（左下有 `create_code_block`）→ 每批最多 **4行**
-                             - 无代码块（纯讲解 + 右侧动画）→ 每批最多 **8行**
-                        2) **再按语义完整性分批（优先级高于行数上限）**：
-                             - 一个知识点可跨多批（建议 2-4 批，按时长自适应）
-                             - **不同知识点不能硬凑到同一批**
-                             - 严禁机械地每批凑满 4 行或 8 行
-                        3) **最后检查上限**：若超出 4/8 行，仅在该知识点内部按自然语义断点拆分，禁止跨知识点拼接凑行数。
-                    - **代码量控制**: 如果代码过长导致左下区域放不下，**必须**将内容拆分为连续的子场景。宁可多页，不可字小。
-        - **State Monitor (底部/角落)**: 实时显示的变量值（Cost, Index, True/False）。
-        - **Text Zoning Strategy (文本分区策略)**:
-          - **Lecture Lines (旁白字幕)**: 必须严格限制在屏幕底部的 "Subtitle Bar" (Bottom 15% area)。严禁将长段解释性文字放在屏幕中央或与图形混排。
-          - **Labels (标签)**: 跟随物体的标签必须简短（Max 2-3 words）。
-          - **Title**: 每一节的标题固定在左上角或顶部，不可遮挡 Main Visual Area。
+                - **Mandatory Pagination Protocol**:
+                    - **Lecture line length limit (hard constraint)**: Each lecture line should not exceed **8 English words** (including punctuation) to fit on one line; only split by semantic meaning when exceeding 8 words. **Forbidden to forcibly split complete short sentences within 8 words into two lines.**
+                    - **Lecture line batching rules (hard constraint, must execute in order)**:
+                        1) **First check if there's a code block**:
+                             - With code block (bottom-left has `create_code_block`) → Maximum **4 lines** per batch
+                             - Without code block (pure lecture + right-side animation) → Maximum **8 lines** per batch
+                        2) **Then batch by semantic completeness (priority over line limit)**:
+                             - One knowledge point can span multiple batches (suggest 2-4 batches, adaptive to duration)
+                             - **Different knowledge points cannot be forced into the same batch**
+                             - Strictly forbidden to mechanically fill 4 or 8 lines per batch
+                        3) **Finally check limit**: If exceeding 4/8 lines, only split within that knowledge point at natural semantic breakpoints, forbidden to splice across knowledge points to fill line count.
+                    - **Code volume control**: If code is too long for bottom-left area, **must** split content into consecutive sub-scenes. Better multiple pages than small text.
+        - **State Monitor (bottom/corner)**: Real-time display of variable values (Cost, Index, True/False).
+        - **Text Zoning Strategy**:
+          - **Lecture Lines (narration subtitles)**: Must be strictly limited to the "Subtitle Bar" at the bottom of the screen (Bottom 15% area). Strictly forbidden to place long explanatory text in screen center or mix with graphics.
+          - **Labels**: Labels following objects must be brief (Max 2-3 words).
+          - **Title**: Each section's title fixed at top-left or top, cannot obstruct Main Visual Area.
 
-    2.  **抽象概念实体化**:
-        - **引用/指针**: 必须画成箭头 (Arrow)。
-        - **递归**: 必须画成**调用栈 (Call Stack)**，用一个个压入的矩形块表示，旁边标注参数值。
-        - **比较/判断**: 必须在屏幕上显示临时的数学不等式（例如 `dist[B] > new_dist`），判定后再消失。
-        - **记忆化/缓存**: 画成一个表格 (Table/Grid)，命中时高亮闪烁。
+    2.  **Abstract Concept Materialization**:
+        - **Reference/Pointer**: Must be drawn as arrows (Arrow).
+        - **Recursion**: Must be drawn as **Call Stack**, represented by stacked rectangular blocks, with parameter values annotated beside.
+        - **Comparison/Condition**: Must display temporary mathematical inequalities on screen (e.g., `dist[B] > new_dist`), disappear after evaluation.
+        - **Memoization/Cache**: Draw as a table (Table/Grid), highlight and flash when hit.
 
-    3.  **脚本要求**:
-        - 每一句旁白（Lecture Line）必须对应代码的解释。
-        - 每一个动画（Animation）必须对应数据的变化（Create, Transform, FadeOut）。
-        - **节奏控制**：根据用户画像中的动画节奏要求调整。
-    
-    4.  **时长规划 (Duration Planning)**:
-        - 每个 section 必须包含 `estimated_duration` 字段，单位为**秒**。
-        - 时长估算规则：
-          - 每句 lecture_line 约 3-5 秒（根据文字长度）
-          - 每个复杂动画约 2-4 秒
-          - 简单动画（FadeIn/FadeOut）约 0.5-1 秒
-          - 代码展示页面需要额外 3-5 秒供观众阅读
-        - 场景引入 (intro) 通常 30-60 秒
-        - 核心算法演示章节通常 45-90 秒
-        - 代码展示章节通常 20-40 秒
-        - **重要**：时长估算应保守，宁可多估不可少估，确保观众有足够时间理解
+    3.  **Script Requirements**:
+        - Each narration line (Lecture Line) must correspond to code explanation.
+        - Each animation must correspond to data changes (Create, Transform, FadeOut).
+        - **Pacing Control**: Adjust according to animation pacing requirements in user profile.
 
-    5.  **语言适配要求**:
-        - 所有代码示例必须使用 **{target_language}**
-        - 代码语法高亮应适配 {target_language} 语法
+    4.  **Duration Planning**:
+        - Each section must include `estimated_duration` field, unit in **seconds**.
+        - Duration estimation rules:
+          - Each lecture_line approximately 3-5 seconds (based on text length)
+          - Each complex animation approximately 2-4 seconds
+          - Simple animations (FadeIn/FadeOut) approximately 0.5-1 seconds
+          - Code display pages need additional 3-5 seconds for viewer reading
+        - Scene introduction (intro) typically 30-60 seconds
+        - Core algorithm demonstration sections typically 45-90 seconds
+        - Code display sections typically 20-40 seconds
+        - **Important**: Duration estimation should be conservative, better to overestimate than underestimate, ensure viewers have sufficient time to understand
 
-    ## 输入大纲
+    5.  **Language Adaptation Requirements**:
+        - All code examples must use **{target_language}**
+        - Code syntax highlighting should adapt to {target_language} syntax
+
+    ## Input Outline
     {outline}
     """
 
     base_prompt += """
     
-    ## ⚠️⚠️⚠️ JSON 输出格式要求（必须严格遵守）⚠️⚠️⚠️
-    
-    **🚨 关键规则：**
-    1. **只输出纯 JSON**，不要添加任何解释文字、markdown 标记或注释
-    2. **字符串中的引号必须转义**：如果字符串内容包含双引号 `"`，必须写成 `\\"`
-    3. **字符串中的换行必须转义**：使用 `\\n` 而不是实际换行
-    4. **数组最后一个元素后不要加逗号**
-    5. **所有字符串必须用双引号**，不能用单引号
-    6. **确保 JSON 可以被 Python 的 json.loads() 正确解析**
-    
-    **✅ 正确的 JSON 格式示例：**
+    ## ⚠️⚠️⚠️ JSON Output Format Requirements (MUST STRICTLY FOLLOW) ⚠️⚠️⚠️
+
+    **🚨 Key Rules:**
+    1. **Output pure JSON only**, do not add any explanatory text, markdown markers, or comments
+    2. **Escape quotes in strings**: If string content contains double quotes `"`, must write as `\\"`
+    3. **Escape newlines in strings**: Use `\\n` instead of actual newlines
+    4. **No comma after last array element**
+    5. **All strings must use double quotes**, not single quotes
+    6. **Ensure JSON can be correctly parsed by Python's json.loads()**
+    7. **Please output JSON directly, do not wrap with ```json ```**
+    8. **Note: In JSON string content, strictly forbidden to have unescaped double quotes ("), if quoting is needed, use single quotes (') instead.**
+
+    **✅ Correct JSON format example:**
     ```json
     {
         "sections": [
             {
                 "id": "section_0_intro",
-                "title": "场景引入",
+                "title": "Scene Introduction",
                 "estimated_duration": 45,
                 "lecture_lines": [
-                    "第一句旁白",
-                    "第二句旁白"
+                    "First narration line",
+                    "Second narration line"
                 ],
                 "animations": [
                     "Define Visual Layout: Left-Right Split.",
@@ -128,12 +132,12 @@ def get_prompt2_storyboard(
             },
             {
                 "id": "section_1",
-                "title": "算法核心步骤",
+                "title": "Algorithm Core Steps",
                 "estimated_duration": 60,
                 "lecture_lines": [
-                    "讲解步骤1",
-                    "讲解步骤2",
-                    "讲解步骤3"
+                    "Explanation step 1",
+                    "Explanation step 2",
+                    "Explanation step 3"
                 ],
                 "animations": [
                     "Define Visual Layout: Split-Left Layout for code demonstration.",
@@ -145,30 +149,31 @@ def get_prompt2_storyboard(
         ]
     }
     ```
-    
-    **❌ 常见错误（会导致解析失败）：**
+
+    **❌ Common Errors (will cause parsing failure):**
     ```
-    // 错误1：数组最后一个元素后面有逗号
-    "lecture_lines": ["第一句", "第二句",]  // ❌ 最后的逗号是错的
-    
-    // 错误2：字符串内的引号没有转义
-    "title": "说"你好""  // ❌ 应该写成 "说\\"你好\\""
-    
-    // 错误3：使用单引号
-    'title': '标题'  // ❌ JSON 必须用双引号
-    
-    // 错误4：多余的逗号
+    // Error 1: Comma after last array element
+    "lecture_lines": ["First", "Second",]  // ❌ Last comma is wrong
+
+    // Error 2: Unescaped quotes in strings
+    "title": "say\\"hello\\""  // ❌ Should be "say\\"hello\\""
+
+    // Error 3: Using single quotes
+    'title': 'Title'  // ❌ JSON must use double quotes
+
+    // Error 4: Extra comma
     {
         "id": "section_1",
-        "title": "标题",  // ❌ 这是最后一个字段，不应该有逗号
+        "title": "Title",  // ❌ This is the last field, should not have comma
     }
     ```
-    
-    **注意**：
-    - `estimated_duration` 是该节的预计时长（秒），必须为整数
-    - 时长要综合考虑 lecture_lines 数量、animations 复杂度、以及观众理解所需时间
-    - 所有章节时长之和应大致符合视频总时长要求
-    - **请直接输出 JSON，不要用 ```json ``` 包裹**
+
+    **Note**:
+    - `estimated_duration` is the estimated duration of this section (seconds), must be an integer
+    - Duration should comprehensively consider lecture_lines count, animations complexity, and viewer understanding time
+    - Sum of all section durations should roughly match total video duration requirement
+    - **Please output JSON directly, do not wrap with ```json ```**
+    - Note: In JSON string content, strictly forbidden to have unescaped double quotes ("), if quoting is needed, use single quotes (') instead.
     """
     return base_prompt
 

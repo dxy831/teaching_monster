@@ -15,7 +15,7 @@ def get_completion_only(result):
 
 
 class ManimCodeErrorAnalyzer:
-    """智能分析 Manim 代码错误并精确定位问题"""
+    """Intelligently analyze Manim code errors and precisely locate issues"""
 
     def __init__(self):
         self.common_manim_errors = {
@@ -91,7 +91,7 @@ class ManimCodeErrorAnalyzer:
             if manim_suggestions:
                 return {
                     "fix_scope": "single_line",
-                    "suggested_fix": f"可能需要导入或创建变量: {', '.join(manim_suggestions)}",
+                    "suggested_fix": f"May need to import or create variable: {', '.join(manim_suggestions)}",
                     "undefined_variable": undefined_name,
                 }
 
@@ -120,11 +120,11 @@ class ManimCodeErrorAnalyzer:
         """Analyze TypeError"""
         # Check if it's a parameter error
         if "takes" in error_msg and "positional arguments" in error_msg:
-            return {"fix_scope": "single_line", "suggested_fix": "检查函数调用的参数数量是否正确"}
+            return {"fix_scope": "single_line", "suggested_fix": "Check if the number of function call parameters is correct"}
 
         # Check if it's a type mismatch error
         if "unsupported operand type" in error_msg:
-            return {"fix_scope": "single_line", "suggested_fix": "检查操作数类型是否匹配"}
+            return {"fix_scope": "single_line", "suggested_fix": "Check if operand types match"}
 
         return {"fix_scope": "function"}
 
@@ -134,15 +134,15 @@ class ManimCodeErrorAnalyzer:
 
     def _analyze_import_error(self, code: str, error_msg: str, error_info: Dict) -> Dict:
         """Analyze ImportError"""
-        return {"fix_scope": "single_line", "suggested_fix": "检查 import 语句是否正确，模块是否存在"}
+        return {"fix_scope": "single_line", "suggested_fix": "Check if import statement is correct and module exists"}
 
     def _analyze_syntax_error(self, code: str, error_msg: str, error_info: Dict) -> Dict:
         """Analyze SyntaxError"""
-        return {"fix_scope": "single_line", "suggested_fix": "检查语法错误：括号匹配、冒号、缩进等"}
+        return {"fix_scope": "single_line", "suggested_fix": "Check syntax errors: bracket matching, colons, indentation, etc."}
 
     def _analyze_indentation_error(self, code: str, error_msg: str, error_info: Dict) -> Dict:
         """Analyze IndentationError"""
-        return {"fix_scope": "single_line", "suggested_fix": "检查缩进是否正确"}
+        return {"fix_scope": "single_line", "suggested_fix": "Check if indentation is correct"}
 
     def _extract_relevant_code_block(self, code: str, error_info: Dict) -> str:
         """Extract the relevant code block based on the error information"""
@@ -236,14 +236,14 @@ class ManimCodeErrorAnalyzer:
     def _get_attribute_suggestion(self, obj_type: str, attr_name: str) -> str:
         """Get suggestions for attributes of a Manim object"""
         common_fixes = {
-            "Text": {"color": "set_color()", "font": "构造函数中的 font_size 参数"},
-            "Mobject": {"move_to": "move_to() 方法存在", "shift": "shift() 方法存在"},
+            "Text": {"color": "set_color()", "font": "font_size parameter in constructor"},
+            "Mobject": {"move_to": "move_to() method exists", "shift": "shift() method exists"},
         }
 
         if obj_type in common_fixes and attr_name in common_fixes[obj_type]:
-            return f"尝试使用 {common_fixes[obj_type][attr_name]}"
+            return f"Try using {common_fixes[obj_type][attr_name]}"
 
-        return f"检查 {obj_type} 对象是否具有 {attr_name} 属性"
+        return f"Check if {obj_type} object has {attr_name} attribute"
 
 
 class ScopeRefineFixer:
@@ -259,13 +259,13 @@ class ScopeRefineFixer:
     def _load_common_fixes(self) -> Dict[str, str]:
         """Load common error fix patterns"""
         return {
-            "AttributeError": "对象属性错误。检查方法名和属性名拼写。",
-            "NameError": "变量未定义。检查变量声明、拼写和作用域。",
-            "TypeError": "类型错误。检查参数类型和数量。",
-            "ImportError": "导入错误。检查模块名和版本兼容性。",
-            "ValueError": "数值错误。检查参数值的有效性。",
-            "IndexError": "索引错误。检查列表/数组边界。",
-            "KeyError": "键错误。检查字典键是否存在。",
+            "AttributeError": "Object attribute error. Check method and attribute name spelling.",
+            "NameError": "Variable not defined. Check variable declaration, spelling, and scope.",
+            "TypeError": "Type error. Check parameter types and count.",
+            "ImportError": "Import error. Check module name and version compatibility.",
+            "ValueError": "Value error. Check parameter value validity.",
+            "IndexError": "Index error. Check list/array boundaries.",
+            "KeyError": "Key error. Check if dictionary key exists.",
         }
 
     def _load_error_patterns(self) -> Dict[str, Dict]:
@@ -273,18 +273,18 @@ class ScopeRefineFixer:
         return {
             "manim_import_error": {
                 "pattern": r"No module named.*manim",
-                "fix": "确保正确导入: from manim import *",
+                "fix": "Ensure correct import: from manim import *",
             },
             "scene_method_error": {
                 "pattern": r"'.*Scene'.*has no attribute",
-                "fix": "检查 Scene 类的方法名，确保使用正确的 Manim API (v0.19.0)",
+                "fix": "Check Scene class method names, ensure using correct Manim API (v0.19.0)",
             },
             "mobject_error": {
                 "pattern": r".*Mobject.*has no attribute",
-                "fix": "检查 Mobject 的方法和属性以确保版本兼容性",
+                "fix": "Check Mobject methods and attributes for version compatibility",
             },
-            "animation_error": {"pattern": r".*Animation.*", "fix": "检查动画类的参数和使用方法"},
-            "syntax_error": {"pattern": r"SyntaxError|IndentationError", "fix": "修复语法错误和缩进问题"},
+            "animation_error": {"pattern": r".*Animation.*", "fix": "Check animation class parameters and usage"},
+            "syntax_error": {"pattern": r"SyntaxError|IndentationError", "fix": "Fix syntax errors and indentation issues"},
         }
 
     def classify_error(self, error_msg: str) -> Tuple[str, str, List[str]]:
@@ -342,12 +342,12 @@ class ScopeRefineFixer:
         test_file = output_dir / f"test_{section_id}.py"
 
         # Create test version of code (add quick exit)
-        # 1. 动态获取类名：不要假设类名是 SectionXScene，而是从代码中正则提取
+        # 1. Dynamically get class name: don't assume class name is SectionXScene, extract from code using regex
         class_match = re.search(r"class\s+(\w+)\s*\(", code)
         if class_match:
             scene_name = class_match.group(1)
         else:
-            # Fallback (保底策略)
+            # Fallback strategy
             scene_name = f"{section_id.title().replace('_', '')}Scene"
 
         test_code = code.replace(
@@ -359,17 +359,17 @@ class ScopeRefineFixer:
             with open(test_file, "w", encoding="utf-8") as f:
                 f.write(test_code)
 
-            # 2. 使用提取出的正确类名进行测试
+            # 2. Use the extracted correct class name for testing
             cmd = ["python", "-c", f"from test_{section_id} import {scene_name}; scene = {scene_name}(); print('Syntax OK')"]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd=output_dir, timeout=20) # 稍微增加一点超时时间到 20s
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=output_dir, timeout=20) # Slightly increase timeout to 20s
 
             test_file.unlink()  # Clean up test file
 
             if result.returncode == 0:
                 return True, None
             else:
-                # 返回具体的错误信息
+                # Return specific error information
                 return False, f"Dry Run Error for class '{scene_name}': {result.stderr}"
 
         except Exception as e:
@@ -410,66 +410,69 @@ class ScopeRefineFixer:
 
         # Adjust fix strategy based on attempt number
         if attempt == 1:
-            strategy = "专注修复 (Focused Fix)"
+            strategy = "Focused Fix"
             specific_prompt = """
-            **专注修复策略 (第 1 次尝试):**
-            - 仅修复报错的具体行。
-            - 保持原有的代码结构和**中文注释/逻辑**不变。
-            - 做最小的必要修改。
-            - 确保所有导入符合 Manim CE v0.19.0。
+            **Focused Fix Strategy (Attempt 1):**
+            - Only fix the specific error line.
+            - Keep the original code structure and logic unchanged.
+            - Make minimal necessary changes.
+            - Ensure all imports comply with Manim CE v0.19.0.
+            - Use English comments.
             """
         elif attempt == 2:
-            strategy = "全面审查 (Comprehensive Review)"
+            strategy = "Comprehensive Review"
             specific_prompt = """
-            **全面审查策略 (第 2 次尝试):**
-            - 审查整个代码的潜在问题。
-            - 检查 Manim API 的兼容性。
-            - 验证变量声明和作用域。
-            - 修复动画时序或顺序问题。
+            **Comprehensive Review Strategy (Attempt 2):**
+            - Review the entire code for potential issues.
+            - Check Manim API compatibility.
+            - Verify variable declarations and scope.
+            - Fix animation timing or sequence issues.
+            - Use English comments.
             """
         else:
-            strategy = "完全重写 (Complete Rewrite)"
+            strategy = "Complete Rewrite"
             specific_prompt = """
-            **完全重写策略 (第 3 次尝试):**
-            - 用更简单、更健壮的方法重写该 Scene。
-            - 仅使用经过验证的 Manim CE v0.19.0 功能。
-            - 优先保证功能运行，而非复杂的视觉效果。
-            - **务必保留**原有的中文讲解文本和字体设置。
+            **Complete Rewrite Strategy (Attempt 3):**
+            - Rewrite the Scene with simpler, more robust methods.
+            - Only use verified Manim CE v0.19.0 features.
+            - Prioritize functionality over complex visual effects.
+            - Preserve original lecture text content and font settings.
+            - Use English comments.
             """
 
         base_prompt = f"""
-        你是一位 Manim Community Edition v0.19.0 的开发专家。请精准修复以下 Python 代码中的错误。
+        You are a Manim Community Edition v0.19.0 development expert. Please precisely fix the errors in the following Python code.
 
-        **错误分析:**
-        - 错误类型: {error_type}
-        - 错误类别: {error_category}
-        - 尝试次数: {attempt}/3
-        - 修复策略: {strategy}
+        **Error Analysis:**
+        - Error Type: {error_type}
+        - Error Category: {error_category}
+        - Attempt: {attempt}/3
+        - Fix Strategy: {strategy}
 
-        **报错信息:**
+        **Error Message:**
         ```
         {error_msg}
         ```
 
-        **当前代码:**
+        **Current Code:**
         ```python
         {current_code}
         ```
 
-        **错误上下文:**
+        **Error Context:**
         {json.dumps(error_context, indent=2)}
 
-        **修复建议:**
+        **Fix Suggestions:**
         {chr(10).join(f"- {s}" for s in suggestions)}
-        
+
         {specific_prompt}
 
-        **要求:**
-        1. 仅输出完整的、修复后的 Python 代码。
-        2. 代码外不要包含任何解释或 markdown 标记。
-        3. 确保代码语法正确。
-        4. **中文字体支持**：如果在修复过程中重写了 Text 对象，必须保留 `font="Microsoft YaHei"` 或类似中文字体设置。
-        5. **防鬼畜**：不要引入复杂的 Transform，对于不同形状的变换使用 FadeTransform 或 ReplacementTransform。
+        **Requirements:**
+        1. Output only the complete, fixed Python code.
+        2. Do not include any explanations or markdown markers outside the code.
+        3. Ensure code syntax is correct.
+        4. Use English comments throughout the code.
+        5. Anti-glitch: Do not introduce complex Transforms; use FadeTransform or ReplacementTransform for shape transformations.
 
         **Code:**"""
 
@@ -495,19 +498,19 @@ class ScopeRefineFixer:
                             if is_dry_run_ok:
                                 return merged_code
                             else:
-                                print(f"⚠️ The dry run failed after local repair: {dry_run_error}")
+                                print(f"⚠️ Dry run failed after local fix: {dry_run_error}")
                         else:
-                            print(f"⚠️ The syntax error after local repair: {syntax_error}")
+                            print(f"⚠️ Syntax error after local fix: {syntax_error}")
                     else:
-                        print("⚠️ The code block merge failed after local repair")
+                        print("⚠️ Code block merge failed after local fix")
                 else:
-                    print("⚠️ The local repair failed after local repair")
+                    print("⚠️ Local fix failed")
             else:
-                print("⚠️ The relevant code block cannot be extracted after local repair")
+                print("⚠️ Cannot extract relevant code block for local fix")
         else:
-            print("🔄 The error scope is large, directly use complete repair")
+            print("🔄 Error scope is large, using complete fix directly")
 
-        print("⚠️ The smart repair failed, fallback to complete repair")
+        print("⚠️ Smart fix failed, falling back to complete fix")
         return self.fix_code_with_multi_stage_validation(section_id, code, error_msg, output_dir)
 
     def fix_code_with_multi_stage_validation(
@@ -526,13 +529,13 @@ class ScopeRefineFixer:
 
                 if hasattr(response, "choices") and response.choices and len(response.choices) > 0:
                     fixed_code = response.choices[0].message.content
-                elif hasattr(response, "candidates") and response.candidates: # 兼容 Gemini
+                elif hasattr(response, "candidates") and response.candidates: # Compatible with Gemini
                     fixed_code = response.candidates[0].content.parts[0].text
                 elif isinstance(response, str):
                     fixed_code = response
                 else:
                     logger.warning(f"Attempt {attempt}: API response format unexpected: {response}")
-                    continue # 跳过本次循环，而不是崩溃
+                    continue # Skip this iteration instead of crashing
 
                 fixed_code = self._clean_code_format(fixed_code)
 
@@ -576,26 +579,27 @@ class ScopeRefineFixer:
         error_context = self.extract_error_context(error_msg)
 
         prompt = f"""
-        你是一位 Manim Community Edition v0.19.0 专家。请修复以下代码块中的错误。
+        You are a Manim Community Edition v0.19.0 expert. Please fix the errors in the following code block.
 
-        **错误分析:**
-        - 修复范围: {error_info.get('fix_scope', 'unknown')}
-        - 建议: {error_info.get('suggested_fix', 'None')}
+        **Error Analysis:**
+        - Fix Scope: {error_info.get('fix_scope', 'unknown')}
+        - Suggestion: {error_info.get('suggested_fix', 'None')}
 
-        **报错信息:**
+        **Error Message:**
         ```
         {error_msg}
         ```
 
-        **待修复代码块:**
+        **Code Block to Fix:**
         ```python
         {code_block}
         ```
 
-        **要求:**
-        1. 仅修复提到的具体错误。
-        2. 保持原有逻辑和**中文内容**。
-        3. 仅输出修复后的 Python 代码块。
+        **Requirements:**
+        1. Only fix the specific error mentioned.
+        2. Keep the original logic intact.
+        3. Output only the fixed Python code block.
+        4. Use English comments.
 
         **Fixed Code:**
         """
@@ -647,8 +651,8 @@ class ScopeRefineFixer:
                             new_lines = lines[:start_idx] + fixed_lines + lines[end_idx:]
                             return "\n".join(new_lines)
 
-            # If all intelligent merging fails, return None to let the system fallback to full repair
-            print("⚠️ Code block merging failed, will fallback to full repair")
+            # If all intelligent merging fails, return None to let the system fallback to full fix
+            print("⚠️ Code block merging failed, will fallback to full fix")
             return None
 
         except Exception as e:

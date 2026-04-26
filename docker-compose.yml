@@ -1,6 +1,6 @@
 # ============================================================================
-# Code2Video Docker Compose 编排
-# 
+# Knowledge2Video Docker Compose 编排
+#
 # 启动: docker-compose up -d --build
 # 停止: docker-compose down
 # 日志: docker-compose logs -f
@@ -14,7 +14,7 @@ services:
   # ==========================================================================
   redis:
     image: redis:7-alpine
-    container_name: code2video-redis
+    container_name: knowledge2video-redis
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
@@ -34,7 +34,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: code2video-api
+    container_name: knowledge2video-api
     ports:
       - "${API_PORT:-8080}:8080"
     environment:
@@ -49,8 +49,11 @@ services:
       - VIDEO_DIR=data/outputs/videos
       - METADATA_DIR=data/outputs/metadata
     volumes:
+      # 开发模式：挂载源代码，修改后重启即可生效
+      - ./src:/app/src
+      - ./prompts:/app/prompts
       # 共享输出目录（API 和 Worker 都需要访问）
-      - video_data:/app/data/outputs
+      - ./data/outputs:/app/data/outputs
       # LLM API 密钥配置文件（从宿主机挂载，可选）
       # - ./src/api_config.json:/app/src/api_config.json:ro
     depends_on:
@@ -71,7 +74,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: code2video-worker
+    container_name: knowledge2video-worker
     # 覆盖默认启动命令，启动 Celery Worker
     command: >
       python -m celery -A src.api.tasks.celery_app worker
@@ -89,8 +92,11 @@ services:
       - VIDEO_DIR=data/outputs/videos
       - METADATA_DIR=data/outputs/metadata
     volumes:
+      # 开发模式：挂载源代码，修改后重启即可生效
+      - ./src:/app/src
+      - ./prompts:/app/prompts
       # 共享输出目录（与 API 服务共享）
-      - video_data:/app/data/outputs
+      - ./data/outputs:/app/data/outputs
       # LLM API 密钥配置文件（从宿主机挂载，可选）
       # - ./src/api_config.json:/app/src/api_config.json:ro
     depends_on:
@@ -103,6 +109,4 @@ services:
 # ============================================================================
 volumes:
   redis_data:
-    driver: local
-  video_data:
     driver: local
