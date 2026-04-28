@@ -70,6 +70,7 @@ class Section:
     lecture_lines: List[str]
     animations: List[str]
     estimated_duration: Optional[int] = None  # 预计时长（秒）
+    highlight_groups: Optional[List[List[int]]] = None
 
 
 @dataclass
@@ -116,6 +117,7 @@ class TeachingVideoAgent:
         knowledge_point,
         folder="CASES",
         cfg: Optional[RunConfig] = None,
+        outline_data: Optional[Dict[str, Any]] = None,
     ):
         """1. Global parameter"""
         self.learning_topic = knowledge_point
@@ -177,6 +179,12 @@ class TeachingVideoAgent:
 
         """5. Data structure"""
         self.outline = None
+        if outline_data is not None:
+            self.outline = TeachingOutline(
+                topic=outline_data["topic"],
+                target_audience=outline_data["target_audience"],
+                sections=outline_data["sections"],
+            )
         self.enhanced_storyboard = None
         self.sections = []
         self.section_codes = {}
@@ -187,7 +195,7 @@ class TeachingVideoAgent:
         """6. For Efficiency"""
         self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    def _request_api_and_track_tokens(self, prompt, max_tokens=10000):
+    def _request_api_and_track_tokens(self, prompt, max_tokens=20000):
         """packages API requests and automatically accumulates token usage"""
         response, usage = self.API(prompt, max_tokens=max_tokens)
         if usage:
@@ -195,6 +203,14 @@ class TeachingVideoAgent:
             self.token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
             self.token_usage["total_tokens"] += usage.get("total_tokens", 0)
         return response
+
+    def _extract_response_text(self, response) -> str:
+        if isinstance(response, str):
+            return response
+        try:
+            return extract_answer_from_response(response)
+        except Exception:
+            return str(response)
 
     def _normalize_cover_text(self, text: str) -> str:
         normalized = (text or "").strip()
@@ -231,7 +247,8 @@ Requirements:
 - Keep it descriptive and aligned to the learner profile.
 - Do not include quotes or extra explanation.
 """
-        subtitle = self._request_api_and_track_tokens(prompt, max_tokens=80)
+        response = self._request_api_and_track_tokens(prompt, max_tokens=80)
+        subtitle = self._extract_response_text(response)
         return self._normalize_cover_text(subtitle)
 
     def _generate_short_cover_title(self, topic: str) -> str:
@@ -245,8 +262,8 @@ Original topic title: {topic}
 Generate a short main cover title of {COVER_SHORT_TITLE_MAX_WORDS} words or fewer that preserves the core concept.
 Do not include quotes or extra explanation.
 """
-        result = self._request_api_and_track_tokens(prompt, max_tokens=60)
-        short_title = self._normalize_cover_text(result)
+        response = self._request_api_and_track_tokens(prompt, max_tokens=60)
+        short_title = self._normalize_cover_text(self._extract_response_text(response))
         if not short_title:
             return topic
         if len(short_title.split()) > COVER_SHORT_TITLE_MAX_WORDS:
@@ -254,6 +271,7 @@ Do not include quotes or extra explanation.
         return short_title
 
     def _resolve_cover_title_pair(self) -> tuple[str, str]:
+        self._ensure_outline()
         main_title = self.learning_topic
         subtitle = self.outline.topic
         if self._titles_are_duplicate(main_title, subtitle):
@@ -316,9 +334,15 @@ Do not include quotes or extra explanation.
 
         if section_id in self.section_steps:
             section_steps = self.section_steps[section_id]
+            is_valid, validation_error = self._validate_cached_section_steps(section_steps)
+            if not is_valid:
+                raise ValueError(f"Invalid in-memory cached steps for remux {section_id}: {validation_error}")
         else:
             with open(steps_file, "r", encoding="utf-8") as f:
                 section_steps = json.load(f)
+            is_valid, validation_error = self._validate_cached_section_steps(section_steps)
+            if not is_valid:
+                raise ValueError(f"Invalid or missing cached steps for remux {section_id}: {validation_error}")
             self.section_steps[section_id] = section_steps
 
         remux_dir = self.output_dir / "audio_remux"
@@ -332,7 +356,76 @@ Do not include quotes or extra explanation.
 
     def get_serializable_state(self):
         """返回可以序列化保存的Agent状态"""
-        return {"idx": self.idx, "knowledge_point": self.learning_topic, "folder": self.folder, "cfg": self.cfg}
+        state = {"idx": self.idx, "knowledge_point": self.learning_topic, "folder": self.folder, "cfg": self.cfg}
+        if self.outline is not None:
+            state["outline_data"] = {
+                "topic": self.outline.topic,
+                "target_audience": self.outline.target_audience,
+                "sections": self.outline.sections,
+            }
+        return state
+
+    def _ensure_outline(self) -> None:
+        if self.outline is not None:
+            return
+
+        outline_file = self.output_dir / "outline.json"
+        if not outline_file.exists():
+            raise RuntimeError(f"Outline is missing and outline.json not found: {outline_file}")
+
+        with open(outline_file, "r", encoding="utf-8") as f:
+            outline_data = json.load(f)
+
+        self.outline = TeachingOutline(
+            topic=outline_data["topic"],
+            target_audience=outline_data["target_audience"],
+            sections=outline_data["sections"],
+        )
+
+    @staticmethod
+    def _validate_cached_section_steps(section_steps: List[dict], expected_steps: Optional[int] = None) -> Tuple[bool, str]:
+        if expected_steps is not None and len(section_steps) != expected_steps:
+            return False, f"cached steps count mismatch: got {len(section_steps)}, expected {expected_steps}"
+
+        for idx, step in enumerate(section_steps):
+            if not isinstance(step, dict):
+                return False, f"step {idx} is not a dict"
+
+            highlight_indices = step.get("highlight_indices")
+            if not isinstance(highlight_indices, list) or not highlight_indices:
+                return False, f"step {idx} has invalid highlight_indices: {highlight_indices!r}"
+            if any(not isinstance(line_idx, int) for line_idx in highlight_indices):
+                return False, f"step {idx} highlight_indices must contain only ints"
+
+            audio_path = step.get("audio_path")
+            if not isinstance(audio_path, str) or not audio_path.strip():
+                return False, f"step {idx} has invalid audio_path: {audio_path!r}"
+            if not Path(audio_path).exists():
+                return False, f"step {idx} audio file not found: {audio_path}"
+
+            audio_duration = step.get("audio_duration")
+            if not isinstance(audio_duration, (int, float)):
+                return False, f"step {idx} has invalid audio_duration type: {audio_duration!r}"
+            if audio_duration != audio_duration or audio_duration <= 0:
+                return False, f"step {idx} has invalid audio_duration value: {audio_duration!r}"
+
+        return True, ""
+
+    def _load_validated_cached_steps(self, section: Section, steps_file: Path) -> Optional[List[dict]]:
+        if not steps_file.exists():
+            return None
+
+        with open(steps_file, "r", encoding="utf-8") as f:
+            section_steps = json.load(f)
+
+        expected_steps = len(section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines))
+        is_valid, validation_error = self._validate_cached_section_steps(section_steps, expected_steps)
+        if not is_valid:
+            print(f"⚠️ {section.id} 缓存 steps 无效，忽略缓存并重建: {validation_error}")
+            return None
+
+        self.section_steps[section.id] = section_steps
+        return section_steps
 
     def _validate_synced_step_coverage(self, code: str, expected_steps: int) -> Tuple[bool, str]:
         try:
@@ -368,6 +461,51 @@ Do not include quotes or extra explanation.
             return False, f"construct() only calls play_synced_step() {synced_calls} times, expected {expected_steps}"
 
         return True, ""
+
+    @staticmethod
+    def _build_default_highlight_groups(lecture_lines: List[str]) -> List[List[int]]:
+        return [[index] for index in range(len(lecture_lines))]
+
+    @classmethod
+    def _normalize_highlight_groups(cls, lecture_lines: List[str], highlight_groups) -> List[List[int]]:
+        if not lecture_lines:
+            return []
+
+        if not highlight_groups:
+            return cls._build_default_highlight_groups(lecture_lines)
+
+        if not isinstance(highlight_groups, list):
+            raise ValueError("highlight_groups must be a list of index lists")
+
+        normalized_groups: List[List[int]] = []
+        seen_indices = set()
+        expected_indices = set(range(len(lecture_lines)))
+
+        for group in highlight_groups:
+            if not isinstance(group, list) or not group:
+                raise ValueError("Each highlight group must be a non-empty list of indices")
+
+            normalized_group: List[int] = []
+            for raw_index in group:
+                if not isinstance(raw_index, int):
+                    raise ValueError("Highlight group indices must be integers")
+                if not (0 <= raw_index < len(lecture_lines)):
+                    raise ValueError(f"Highlight group index out of range: {raw_index}")
+                if raw_index in seen_indices:
+                    raise ValueError(f"Highlight group index repeated: {raw_index}")
+                seen_indices.add(raw_index)
+                normalized_group.append(raw_index)
+
+            normalized_groups.append(normalized_group)
+
+        if seen_indices != expected_indices:
+            missing = sorted(expected_indices - seen_indices)
+            extra = sorted(seen_indices - expected_indices)
+            raise ValueError(
+                f"highlight_groups must cover every lecture line exactly once; missing={missing}, extra={extra}"
+            )
+
+        return normalized_groups
 
     def generate_outline(self) -> TeachingOutline:
         outline_file = self.output_dir / "outline.json"
@@ -505,12 +643,18 @@ Do not include quotes or extra explanation.
         # Parse into Section objects (using enhanced storyboard)
         self.sections = []
         for section_data in self.enhanced_storyboard["sections"]:
+            lecture_lines = section_data.get("lecture_lines", [])
+            highlight_groups = self._normalize_highlight_groups(
+                lecture_lines,
+                section_data.get("highlight_groups"),
+            )
             section = Section(
                 id=section_data["id"],
                 title=section_data["title"],
-                lecture_lines=section_data.get("lecture_lines", []),
+                lecture_lines=lecture_lines,
                 animations=section_data["animations"],
                 estimated_duration=section_data.get("estimated_duration"),  # 解析预计时长
+                highlight_groups=highlight_groups,
             )
             self.sections.append(section)
 
@@ -545,9 +689,7 @@ Do not include quotes or extra explanation.
         封面展示大标题（短名称）+ 副标题（完整 topic），并播放介绍旁白。
         使用确定性模板生成 Manim 代码，保证 100% 成功率。
         """
-        if not self.outline:
-            print("⚠️ 大纲尚未生成，跳过封面注入")
-            return
+        self._ensure_outline()
 
         # 如果已经注入过，不重复注入
         if self.sections and self.sections[0].id == "section_cover":
@@ -563,6 +705,7 @@ Do not include quotes or extra explanation.
             lecture_lines=[intro_text],
             animations=["Gradient background", "Create decoration lines", "FadeIn title", "FadeIn subtitle", "Play intro audio"],
             estimated_duration=10,  # 封面约 8-12 秒（含旁白）
+            highlight_groups=[[0]],
         )
 
         # 插入到 sections 最前面
@@ -578,6 +721,8 @@ Do not include quotes or extra explanation.
         Returns:
             完整的 Manim 代码字符串
         """
+        self._ensure_outline()
+
         # 先生成 TTS 音频（封面有旁白了）
         section_steps = self.prepare_section_steps(section)
 
@@ -639,6 +784,7 @@ Do not include quotes or extra explanation.
             lecture_lines=overview_lines,
             animations=["FadeIn title", "Sequential FadeIn bullet points", "FadeIn ending"],
             estimated_duration=20,  # 概述约 15-25 秒
+            highlight_groups=self._build_default_highlight_groups(overview_lines),
         )
 
         # 插入到 sections 最前面
@@ -729,13 +875,13 @@ Do not include quotes or extra explanation.
                 and steps_file.exists()
                 and audio_files_exist
             ):
-                print(f"📂 发现 {section.id} 的现有代码，正在读取...")
-                with open(steps_file, "r", encoding="utf-8") as f:
-                    self.section_steps[section.id] = json.load(f)
-                with open(code_file, "r", encoding="utf-8") as f:
-                    code = f.read()
-                    self.section_codes[section.id] = code
-                    return code
+                section_steps = self._load_validated_cached_steps(section, steps_file)
+                if section_steps is not None:
+                    print(f"📂 发现 {section.id} 的现有代码，正在读取...")
+                    with open(code_file, "r", encoding="utf-8") as f:
+                        code = f.read()
+                        self.section_codes[section.id] = code
+                        return code
             return self._generate_cover_code(section)
 
         # ── 概述 section 使用确定性模板，跳过 LLM ──
@@ -752,13 +898,13 @@ Do not include quotes or extra explanation.
                 and steps_file.exists()
                 and audio_files_exist
             ):
-                print(f"📂 发现 {section.id} 的现有代码，正在读取...")
-                with open(steps_file, "r", encoding="utf-8") as f:
-                    self.section_steps[section.id] = json.load(f)
-                with open(code_file, "r", encoding="utf-8") as f:
-                    code = f.read()
-                    self.section_codes[section.id] = code
-                    return code
+                section_steps = self._load_validated_cached_steps(section, steps_file)
+                if section_steps is not None:
+                    print(f"📂 发现 {section.id} 的现有代码，正在读取...")
+                    with open(code_file, "r", encoding="utf-8") as f:
+                        code = f.read()
+                        self.section_codes[section.id] = code
+                        return code
             return self._generate_overview_code(section)
 
         code_file = self.output_dir / f"{section.id}.py"
@@ -778,12 +924,12 @@ Do not include quotes or extra explanation.
             and audio_files_exist
         ):
             print(f"📂 发现 {section.id} 的现有代码，正在读取...")
-            with open(steps_file, "r", encoding="utf-8") as f:
-                self.section_steps[section.id] = json.load(f)
-            with open(code_file, "r", encoding="utf-8") as f:
-                code = f.read()
-                self.section_codes[section.id] = code
-                return code
+            section_steps = self._load_validated_cached_steps(section, steps_file)
+            if section_steps is not None:
+                with open(code_file, "r", encoding="utf-8") as f:
+                    code = f.read()
+                    self.section_codes[section.id] = code
+                    return code
         # print(f"💻 正在为 {section.id} 生成 Manim 代码 (尝试 {attempt}/{self.max_regenerate_tries})...")
         regenerate_note = ""
         if attempt > 1:
@@ -871,16 +1017,19 @@ Do not include quotes or extra explanation.
             and audio_dir.exists()
             and any(file_path.is_file() for file_path in audio_dir.glob("*.wav"))
         ):
-            with open(steps_file, "r", encoding="utf-8") as f:
-                section_steps = json.load(f)
-            self.section_steps[section.id] = section_steps
-            return section_steps
+            section_steps = self._load_validated_cached_steps(section, steps_file)
+            if section_steps is not None:
+                return section_steps
 
         section_steps = build_section_steps(
             section=section,
             output_root=self.output_dir,
             api_func=self._request_api_and_track_tokens,
         )
+        expected_steps = len(section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines))
+        is_valid, validation_error = self._validate_cached_section_steps(section_steps, expected_steps)
+        if not is_valid:
+            raise ValueError(f"Generated invalid steps for {section.id}: {validation_error}")
         save_section_steps(section_steps, steps_file)
         self.section_steps[section.id] = section_steps
         return section_steps
@@ -1182,12 +1331,21 @@ Do not include quotes or extra explanation.
             except Exception as e:
                 return section.id, e
 
+        failed_sections = {}
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {executor.submit(task, section): section for section in self.sections}
             for future in as_completed(futures):
                 section_id, err = future.result()
                 if err:
                     print(f"❌ {self.learning_topic} {section_id} 代码生成失败: {err}")
+                    failed_sections[section_id] = err
+
+        critical_sections = [section_id for section_id in ("section_cover", "section_overview") if section_id in failed_sections]
+        if critical_sections:
+            raise RuntimeError(
+                f"{self.learning_topic} 关键 section 代码生成失败: "
+                + ", ".join(f"{section_id}: {failed_sections[section_id]}" for section_id in critical_sections)
+            )
 
         return self.section_codes
 

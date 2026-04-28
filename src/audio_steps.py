@@ -66,9 +66,10 @@ You are a teaching video narration polisher, currently processing the "course ov
 Task:
 - Expand the screen text below into a more natural, conversational, single-sentence narration suitable for TTS playback
 - Must sound as natural and fluent as an experienced teacher introducing the course outline in class
-- Don't start every sentence with "next" - vary the transitions and connections
-- Must preserve the original meaning, don't introduce new knowledge points
-- Must be "minimal incremental expansion", don't write long paragraphs
+- Don't start every sentence with "next" or "now"; vary the transition phrasing
+- Avoid repetitive openings such as "Now we move into..." or "Now let's move on to..."
+- Preserve the original meaning; do not introduce new knowledge points
+- Must be "minimal incremental expansion", with a concise teacher-speech style
 - Output must be a single line of plain text only, no quotes, numbering, or explanations
 - Do not include any labels, prefixes, or metadata (like 'spoken_script:', 'output:', 'narration:', etc.)
 - Output spoken_script must be in English
@@ -78,9 +79,11 @@ Reference examples (screen text → excellent narration):
 - "Part 1, Basic Concepts" → "First, we'll start with the basic concepts to help everyone build a solid foundation"
 - "Part 2, Core Principles" → "Building on that, in part 2 we'll dive deeper into the core principles"
 - "Part 3, Code Implementation" → "After understanding the principles, in part 3 we'll get hands-on with the code"
-- "Part 4, Practical Case Study" → "In part 4, we'll consolidate what we've learned through a practical case study"
+- "Part 4, Practical Case Study" → "From there, we'll explore a practical case study in part 4"
 - "Part 5, Performance Optimization" → "Then, in part 5 we'll discuss performance optimization techniques"
 - "Part 6, Common Issues" → "Finally, we'll summarize some common issues and important considerations"
+- "the fourth part, Energy Payoff Phase" → "From there, we'll examine the Energy Payoff Phase in the fourth part"
+- "the fifth part, Energy Accounting Summary" → "Next, the fifth part gives us a clear accounting summary of the energy flows"
 - "Alright, let's officially begin learning the specific content" → "Okay, now that we understand the course structure, let's move into the first part"
 
 Screen text:
@@ -88,13 +91,21 @@ Screen text:
 
 
 def _is_overview_screen_text(screen_text: str) -> bool:
-    """判断 screen_text 是否属于概述部分（包含"第X部分"等特征词）。"""
+    """判断 screen_text 是否属于概述部分（包含概述 / part 导航句式）。"""
     import re as _re
     if _re.search(r"第[一二三四五六七八九十\d]+部分", screen_text):
         return True
     if "本视频将分为" in screen_text:
         return True
     if "让我们正式开始" in screen_text or "开始具体内容的学习" in screen_text:
+        return True
+    if _re.search(r"^(the\s+(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|\d+(?:st|nd|rd|th))\s+part)\b", screen_text, _re.IGNORECASE):
+        return True
+    if _re.search(r"^part\s+\d+\b", screen_text, _re.IGNORECASE):
+        return True
+    if screen_text.strip().lower().startswith("this video will be divided"):
+        return True
+    if screen_text.strip().lower().startswith("alright, let's now begin"):
         return True
     return False
 
@@ -315,10 +326,13 @@ def build_section_steps(
     output_root = Path(output_root).resolve()
     audio_dir = reset_section_audio_dir(output_root / "audio" / section.id)
     section_steps = []
+    highlight_groups = getattr(section, "highlight_groups", None) or [[index] for index in range(len(section.lecture_lines))]
 
-    for index, screen_text in enumerate(section.lecture_lines):
+    for index, highlight_indices in enumerate(highlight_groups):
+        screen_texts = [section.lecture_lines[line_index] for line_index in highlight_indices]
+        combined_screen_text = " ".join(screen_texts)
         spoken_script = expand_screen_text_to_spoken_script(
-            screen_text=screen_text,
+            screen_text=combined_screen_text,
             api_func=api_func,
             max_retries=expansion_max_retries,
         )
@@ -331,10 +345,12 @@ def build_section_steps(
 
         section_steps.append(
             {
-                "screen_text": screen_text,
+                "screen_text": screen_texts[0] if len(screen_texts) == 1 else "\n".join(screen_texts),
+                "screen_texts": screen_texts,
                 "spoken_script": spoken_script,
                 "audio_path": str(audio_path.resolve()),
                 "audio_duration": audio_duration,
+                "highlight_indices": list(highlight_indices),
             }
         )
 

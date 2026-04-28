@@ -144,6 +144,7 @@ def get_prompt2_storyboard(
                     "First narration line",
                     "Second narration line"
                 ],
+                "highlight_groups": [[0], [1]],
                 "animations": [
                     "Define Visual Layout: Left-Right Split.",
                     "Visual: FadeIn title at top.",
@@ -159,12 +160,12 @@ def get_prompt2_storyboard(
                     "Then, we enter a loop to process data.",
                     "Inside the loop, we check if the condition is met."
                 ],
+                "highlight_groups": [[0], [1, 2]],
                 "animations": [
                     "Define Visual Layout: Split-Left Layout for code demonstration.",
                     "Code: def algorithm():\\n    for x in data:\\n        if x > 0: pass",
                     "Action: Highlight code line 1 (def algorithm) while narrating first line.",
-                    "Action: Highlight code line 2 (for loop) while narrating second line.",
-                    "Action: Highlight code line 3 (if condition) while narrating third line.",
+                    "Action: Highlight code lines 2 and 3 together while narrating the second grouped step.",
                     "Visual: Create data structure visualization."
                 ]
             }
@@ -185,6 +186,7 @@ def get_prompt2_storyboard(
                     "First narration line",
                     "Second narration line"
                 ],
+                "highlight_groups": [[0], [1]],
                 "animations": [
                     "Define Visual Layout: Left-Right Split.",
                     "Visual: FadeIn title at top.",
@@ -200,10 +202,11 @@ def get_prompt2_storyboard(
                     "Explanation step 2",
                     "Explanation step 3"
                 ],
+                "highlight_groups": [[0], [1, 2]],
                 "animations": [
                     "Define Visual Layout: Left-Right Split for lecture and visuals.",
                     "Visual: Create labeled diagram showing key structure.",
-                    "Visual: Highlight key formula with MathTex.",
+                    "Visual: Highlight key formula with MathTex while narrating the grouped second step.",
                     "Visual: Show process flow with arrows and labels."
                 ]
             }
@@ -222,10 +225,14 @@ def get_prompt2_storyboard(
     2. **Escape quotes in strings**: If string content contains double quotes `"`, must write as `\\"`
     3. **Escape newlines in strings**: Use `\\n` instead of actual newlines
     4. **No comma after last array element**
-    5. **All strings must use double quotes**, not single quotes
-    6. **Ensure JSON can be correctly parsed by Python's json.loads()**
-    7. **Please output JSON directly, do not wrap with ```json ```**
-    8. **Note: In JSON string content, strictly forbidden to have unescaped double quotes ("), if quoting is needed, use single quotes (') instead.**
+    5. **All sections must include `highlight_groups`**: It must be a JSON array of non-empty integer index arrays, such as `[[0], [1, 2], [3]]`.
+       - Every lecture line index must appear exactly once across all groups.
+       - If one spoken sentence covers multiple lecture_lines, those line indices must be placed in the same group.
+       - Do not guess punctuation-based grouping later; you must declare the grouping explicitly here.
+    6. **All strings must use double quotes**, not single quotes
+    7. **Ensure JSON can be correctly parsed by Python's json.loads()**
+    8. **Please output JSON directly, do not wrap with ```json ```**
+    9. **Note: In JSON string content, strictly forbidden to have unescaped double quotes ("), if quoting is needed, use single quotes (') instead.**
 
     """
     base_prompt += json_example

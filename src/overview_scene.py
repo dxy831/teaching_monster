@@ -18,6 +18,7 @@ ensuring the overview is concise and effective, with a maximum of 6 items per pa
 from __future__ import annotations
 
 import json
+import math
 import re
 import textwrap
 from typing import Callable, List, Optional
@@ -220,6 +221,22 @@ def build_overview_lecture_lines(
     return lines
 
 
+def _validate_overview_section_steps(section_titles: List[str], section_steps: List[dict]) -> None:
+    expected_steps = len(section_titles) + 2
+    if len(section_steps) != expected_steps:
+        raise ValueError(f"overview steps count mismatch: got {len(section_steps)}, expected {expected_steps}")
+
+    for idx, step in enumerate(section_steps):
+        if not isinstance(step, dict):
+            raise ValueError(f"overview step {idx} is not a dict")
+        audio_path = step.get("audio_path")
+        if not isinstance(audio_path, str) or not audio_path.strip():
+            raise ValueError(f"overview step {idx} has invalid audio_path: {audio_path!r}")
+        audio_duration = step.get("audio_duration")
+        if not isinstance(audio_duration, (int, float)) or not math.isfinite(audio_duration) or audio_duration <= 0:
+            raise ValueError(f"overview step {idx} has invalid audio_duration: {audio_duration!r}")
+
+
 # ── Generate deterministic Manim code ───────────────────────────────────
 
 
@@ -246,6 +263,8 @@ def generate_overview_manim_code(
     Returns:
         Complete Python/Manim code string
     """
+    _validate_overview_section_steps(section_titles, section_steps)
+
     # Build all bullet text list (screen uses circled number format)
     all_bullet_texts = []
     for idx, title in enumerate(section_titles, start=1):
@@ -261,6 +280,8 @@ def generate_overview_manim_code(
         pages.append(list(range(start, end)))
 
     num_pages = len(pages)
+    if num_pages == 0:
+        raise ValueError("overview requires at least one section title")
 
     # Generate all bullet Text creation code
     bullet_creation_lines = []
@@ -300,6 +321,9 @@ def generate_overview_manim_code(
             block_lines.append(
                 f"        self.lecture = bullets"
             )
+            block_lines.append(
+                f"        self.current_lecture_line_indices = {page_bullet_indices}"
+            )
         else:
             page_bullet_names = [f"bullet_{i}" for i in page_bullet_indices]
             block_lines.append(
@@ -328,6 +352,9 @@ def generate_overview_manim_code(
             )
             block_lines.append(
                 f"        self.lecture = bullets"
+            )
+            block_lines.append(
+                f"        self.current_lecture_line_indices = {page_bullet_indices}"
             )
 
         # FadeIn each bullet + play_synced_step

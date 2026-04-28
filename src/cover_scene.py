@@ -16,6 +16,19 @@ This module does not depend on LLM, deterministic template ensures 100% success 
 from __future__ import annotations
 
 import json
+import math
+
+
+def _validate_cover_section_steps(section_steps: list) -> None:
+    for idx, step in enumerate(section_steps):
+        if not isinstance(step, dict):
+            raise ValueError(f"cover step {idx} is not a dict")
+        audio_path = step.get("audio_path")
+        if not isinstance(audio_path, str) or not audio_path.strip():
+            raise ValueError(f"cover step {idx} has invalid audio_path: {audio_path!r}")
+        audio_duration = step.get("audio_duration")
+        if not isinstance(audio_duration, (int, float)) or not math.isfinite(audio_duration) or audio_duration <= 0:
+            raise ValueError(f"cover step {idx} has invalid audio_duration: {audio_duration!r}")
 
 
 def generate_cover_manim_code(topic: str, short_title: str, section_steps: list) -> str:
@@ -39,6 +52,8 @@ def generate_cover_manim_code(topic: str, short_title: str, section_steps: list)
     Returns:
         Complete Python/Manim code string
     """
+    _validate_cover_section_steps(section_steps)
+
     # Safely escape quotes
     safe_topic = topic.replace('"', '\\"').replace("'", "\\'")
     safe_short_title = short_title.replace('"', '\\"').replace("'", "\\'")
@@ -131,8 +146,11 @@ class CoverScene(Scene):
 
         # 5. Play introduction voiceover
         if steps:
-            self.add_sound(steps[0]["audio_path"])
-            self.wait(steps[0]["audio_duration"])
+            self.play_synced_step(
+                steps[0].get("highlight_indices", [0]),
+                steps[0]["audio_path"],
+                steps[0]["audio_duration"],
+            )
         else:
             self.wait(2.0)
 

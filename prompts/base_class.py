@@ -14,10 +14,10 @@ class TeachingScene(Scene):
         lecture_group = VGroup(*lecture_texts).arrange(DOWN, aligned_edge=LEFT, buff=0.3)
         return lecture_group
 
-    def setup_layout(self, title_text, lecture_lines):
+    def setup_layout(self, title_text, lecture_lines, lecture_line_indices=None):
         # BASE - warm color scheme
         self.camera.background_color = "#FFFDF4"  # warm ivory background
-        
+
         # Main title - must use bold weight="BOLD", color #BE8944
         self.title = Text(title_text, font_size=28, color="#BE8944", weight="BOLD").to_edge(UP)
         self.add(self.title)
@@ -28,6 +28,7 @@ class TeachingScene(Scene):
         self.lecture.next_to(self.title, DOWN, buff=1.0).to_edge(LEFT, buff=0.3)
         self.add(self.lecture)
         self.lecture_anchor = self.lecture.get_corner(UL)
+        self.current_lecture_line_indices = list(lecture_line_indices) if lecture_line_indices is not None else list(range(len(lecture_lines)))
 
         # Define fine-grained animation grid (6x6 grid on right side)
         self.grid = {}
@@ -131,7 +132,7 @@ class TeachingScene(Scene):
 
     def play_synced_step(
         self,
-        line_index,
+        line_indices,
         audio_path,
         audio_duration,
         *animations,
@@ -145,19 +146,44 @@ class TeachingScene(Scene):
         - allow right-side animation to run in parallel with the audio
 
         Args:
-            line_index: index of the left-side lecture line
+            line_indices: index or indices of the currently displayed left-side lecture lines
             audio_path: absolute path to the audio file
             audio_duration: actual physical duration of the audio in seconds
             *animations: animations to run in parallel with the audio
             highlight_color: highlight color
             reset_color: restore color
         \"\"\"
-        if not (0 <= line_index < len(self.lecture)):
-            raise IndexError(f"Invalid lecture line index: {line_index}")
+        if isinstance(line_indices, int):
+            line_indices = [line_indices]
+        elif isinstance(line_indices, tuple):
+            line_indices = list(line_indices)
+        elif not isinstance(line_indices, list):
+            raise TypeError("line_indices must be an int or a list of ints")
+
+        if not line_indices:
+            raise ValueError("line_indices must not be empty")
+        if audio_duration is None or not isinstance(audio_duration, (int, float)):
+            raise ValueError(f"audio_duration must be a positive number, got {audio_duration!r}")
         if audio_duration <= 0:
             raise ValueError(f"audio_duration must be positive, got {audio_duration}")
 
-        self.lecture[line_index].set_color(highlight_color)
+        current_line_indices = getattr(self, "current_lecture_line_indices", list(range(len(self.lecture))))
+        displayed_indices = []
+        for line_index in line_indices:
+            if not isinstance(line_index, int):
+                raise TypeError("line_indices must contain only ints")
+            
+            # Find ALL display indices that correspond to this absolute line_index
+            matches = [i for i, val in enumerate(current_line_indices) if val == line_index]
+            if not matches:
+                raise IndexError(f"Lecture line index {line_index} is not currently displayed")
+                
+            for display_index in matches:
+                if display_index not in displayed_indices:
+                    displayed_indices.append(display_index)
+
+        for display_index in displayed_indices:
+            self.lecture[display_index].set_color(highlight_color)
         self.add_sound(audio_path)
 
         if animations:
@@ -165,9 +191,10 @@ class TeachingScene(Scene):
         else:
             self.wait(audio_duration)
 
-        self.lecture[line_index].set_color(reset_color)
+        for display_index in displayed_indices:
+            self.lecture[display_index].set_color(reset_color)
 
-    def replace_lecture_lines(self, lecture_lines):
+    def replace_lecture_lines(self, lecture_lines, lecture_line_indices=None):
         \"\"\"
         Replace the left-side lecture text with a new batch while keeping the top-left anchor fixed.
         Used for showing many steps in separate batches.
@@ -177,6 +204,7 @@ class TeachingScene(Scene):
         self.play(FadeOut(self.lecture), FadeIn(new_lecture))
         self.remove(self.lecture)
         self.lecture = new_lecture
+        self.current_lecture_line_indices = list(lecture_line_indices) if lecture_line_indices is not None else list(range(len(lecture_lines)))
 
     def place_in_area(self, mobject, top_left, bottom_right, scale_factor=1.0):
         \"\"\"Place an object at the center of a grid area and automatically crop to bounds.\"\"\"

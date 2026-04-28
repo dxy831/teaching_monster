@@ -326,12 +326,12 @@ def get_prompt3_code(
     ### Rule 6: Narration steps must use play_synced_step()
 
     **Every narration must call `self.play_synced_step(...)`.**
-    It internally plays audio, keeps the corresponding sentence highlighted, and runs right-side animations in parallel with audio.
+    It internally plays audio, keeps the corresponding sentence or sentence group highlighted, and runs right-side animations in parallel with audio.
 
     ```python
     # ✅ Correct: Use actual audio duration as the only time ground truth for narration
     self.play_synced_step(
-        0,
+        steps[0]["highlight_indices"],
         steps[0]["audio_path"],
         steps[0]["audio_duration"],
         Create(array_group)
@@ -345,6 +345,7 @@ def get_prompt3_code(
     **Note:**
     - `steps[i]["spoken_script"]` is only used for offline TTS, not allowed to display on screen
     - Only `steps[i]["screen_text"]` can be displayed on screen
+    - `steps[i]["highlight_indices"]` defines which lecture lines must stay highlighted for this audio step; if a sentence spans multiple lines, pass the full list directly into `play_synced_step(...)`
     - If right-side animations are needed inside narration segment, must be passed as parallel animations in `play_synced_step(..., *animations)`
     - Strictly forbidden to write extra `self.wait(x)` inside narration segment to align with voice
     - If current batch's `screen_texts` are not enough to cover subsequent narrations, must call `self.replace_lecture_lines(next_batch_lines)` first before continuing
@@ -481,15 +482,16 @@ def algo(data):
     **Every sentence of lecture text must be completed through `play_synced_step()`:**
     - When audio starts playing, corresponding sentence starts highlighting.
     - **Visual Sync Requirement**: Any right-side highlighting (e.g., `SurroundingRectangle` on code or diagrams) MUST be passed into `play_synced_step` alongside the audio.
-    - **Group Highlighting**: If a speaker narrates multiple lines or a block of logic, all involved on-screen elements (lines of code, specific nodes) MUST be highlighted simultaneously and stay highlighted for the duration of that audio step.
+    - **Group Highlighting**: If a speaker narrates multiple lecture lines in one sentence, those lecture lines must be placed into the same `highlight_indices` group and passed together to `play_synced_step(...)`.
+    - `highlight_indices` across all steps must cover every currently displayed lecture line exactly once for that batch, with no missing indices and no duplicates.
     - Highlighting lasts for entire `audio_duration`.
     - After narration ends, restore original color `#2C1608`.
     - Strictly forbidden to skip any sentence or visual emphasis mentioned in the storyboard.
 
     ```python
-    # ✅ Correct: Right-side highlight syncs perfectly with spoken line 1
+    # ✅ Correct: Right-side highlight syncs perfectly with a grouped spoken step
     self.play_synced_step(
-        1,
+        steps[1]["highlight_indices"],
         steps[1]["audio_path"],
         steps[1]["audio_duration"],
         Transform(highlight, SurroundingRectangle(code_lines[1], color=YELLOW))
@@ -550,9 +552,12 @@ def algo(data):
             steps = {section_steps}
             current_batch = steps[:4]
             screen_texts = [step["screen_text"] for step in current_batch]
+            current_batch_indices = []
+            for step in current_batch:
+                current_batch_indices.extend(step["highlight_indices"])
 
             # 🔴🔴🔴 First line must call setup_layout()! Set background color and basic layout 🔴🔴🔴
-            self.setup_layout("{section.title}", screen_texts)
+            self.setup_layout("{section.title}", screen_texts, lecture_line_indices=current_batch_indices)
 """ + (f"""
             # 1. Create code block - 🔴 Must use self.create_code_block()!
             code_raw = \"\"\"# {target_language} example
@@ -571,14 +576,14 @@ def algo(data):
 
             # 🔴 Narration must use play_synced_step, based on actual audio duration
             self.play_synced_step(
-                0,
+                steps[0]["highlight_indices"],
                 steps[0]["audio_path"],
                 steps[0]["audio_duration"],
                 Create(code)
             )
 
             self.play_synced_step(
-                1,
+                steps[1]["highlight_indices"],
                 steps[1]["audio_path"],
                 steps[1]["audio_duration"],
                 Create(array_group)
@@ -588,7 +593,7 @@ def algo(data):
             code_lines = code[2]
             highlight = SurroundingRectangle(code_lines[0], color=YELLOW, buff=0.05)
             self.play_synced_step(
-                2,
+                steps[2]["highlight_indices"],
                 steps[2]["audio_path"],
                 steps[2]["audio_duration"],
                 Create(highlight)
@@ -597,7 +602,7 @@ def algo(data):
             # Move highlight
             new_hl = SurroundingRectangle(code_lines[1], color=YELLOW, buff=0.05)
             self.play_synced_step(
-                3,
+                steps[3]["highlight_indices"],
                 steps[3]["audio_path"],
                 steps[3]["audio_duration"],
                 Transform(highlight, new_hl)
@@ -606,9 +611,15 @@ def algo(data):
             # If narration exceeds current batch, must switch left-side lecture text first, then continue highlighting
             if len(steps) > 4:
                 next_batch = steps[4:8]
-                self.replace_lecture_lines([step["screen_text"] for step in next_batch])
+                next_batch_indices = []
+                for step in next_batch:
+                    next_batch_indices.extend(step["highlight_indices"])
+                self.replace_lecture_lines(
+                    [step["screen_text"] for step in next_batch],
+                    lecture_line_indices=next_batch_indices,
+                )
                 self.play_synced_step(
-                    0,
+                    next_batch[0]["highlight_indices"],
                     next_batch[0]["audio_path"],
                     next_batch[0]["audio_duration"]
                 )
@@ -637,21 +648,21 @@ def algo(data):
 
             # 🔴 Narration must use play_synced_step, based on actual audio duration
             self.play_synced_step(
-                0,
+                steps[0]["highlight_indices"],
                 steps[0]["audio_path"],
                 steps[0]["audio_duration"],
                 FadeIn(formula)
             )
 
             self.play_synced_step(
-                1,
+                steps[1]["highlight_indices"],
                 steps[1]["audio_path"],
                 steps[1]["audio_duration"],
                 FadeIn(step_group), FadeIn(arrow), FadeIn(result_group)
             )
 
             self.play_synced_step(
-                2,
+                steps[2]["highlight_indices"],
                 steps[2]["audio_path"],
                 steps[2]["audio_duration"],
                 Indicate(formula, color=YELLOW)
@@ -660,9 +671,15 @@ def algo(data):
             # If narration exceeds current batch, must switch left-side lecture text first
             if len(steps) > 4:
                 next_batch = steps[4:8]
-                self.replace_lecture_lines([step["screen_text"] for step in next_batch])
+                next_batch_indices = []
+                for step in next_batch:
+                    next_batch_indices.extend(step["highlight_indices"])
+                self.replace_lecture_lines(
+                    [step["screen_text"] for step in next_batch],
+                    lecture_line_indices=next_batch_indices,
+                )
                 self.play_synced_step(
-                    0,
+                    next_batch[0]["highlight_indices"],
                     next_batch[0]["audio_path"],
                     next_batch[0]["audio_duration"]
                 )
