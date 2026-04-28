@@ -68,8 +68,6 @@ class CoverScene(Scene):
         # ── Main title (short name, centered) ──
         title = Text(
             "{safe_short_title}",
-            font="Arial",
-            font_size=60,
             color="#7B4B2A",
             weight="BOLD",
         )
@@ -78,8 +76,7 @@ class CoverScene(Scene):
         # ── Subtitle (full name) ──
         subtitle = Text(
             "{safe_topic}",
-            font="Arial",
-            font_size=28,
+            font_size=24,
             color="#8B5E3C",
         )
         subtitle.next_to(title, DOWN, buff=0.5)

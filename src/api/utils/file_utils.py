@@ -69,6 +69,21 @@ def save_video_with_hash(source_path: str, metadata: Optional[Dict[str, Any]] = 
     return new_filename
 
 
+def save_related_file(file_hash: str, source_path: str, extension: Optional[str] = None) -> str:
+    """保存与视频同一哈希前缀的附属文件（如字幕）。"""
+    source_path = str(source_path)
+    _, ext = os.path.splitext(source_path)
+    if extension:
+        ext = extension if extension.startswith(".") else f".{extension}"
+    if not ext:
+        raise ValueError("related file must have an extension")
+
+    filename = f"{file_hash}{ext}"
+    destination = os.path.join(settings.video_dir, filename)
+    shutil.copy2(source_path, destination)
+    return filename
+
+
 def get_video_path(filename: str) -> Optional[str]:
     """
     获取视频文件的完整路径
@@ -181,3 +196,127 @@ def get_video_duration(file_path: str) -> Optional[float]:
             return clip.duration
     except Exception:
         return None
+
+
+def get_video_resolution(file_path: str) -> Optional[tuple]:
+    """
+    获取视频分辨率（宽x高）
+    
+    Args:
+        file_path: 视频文件路径
+        
+    Returns:
+        (width, height) 元组，如果无法获取则返回 None
+    """
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        return None
+    
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            output = (result.stdout or "").strip()
+            if output:
+                parts = output.split(",")
+                if len(parts) >= 2:
+                    return (int(parts[0]), int(parts[1]))
+    except Exception:
+        pass
+    
+    return None
+
+
+def validate_video_output(
+    file_path: str,
+    max_duration: int = 1800,
+    min_width: int = 1280,
+    min_height: int = 720,
+    max_size_gb: float = 3.0
+) -> Dict[str, Any]:
+    """
+    校验视频文件是否符合比赛规范
+    
+    Args:
+        file_path: 视频文件路径
+        max_duration: 最大时长（秒），默认 1800（30分钟）
+        min_width: 最小宽度，默认 1280
+        min_height: 最小高度，默认 720
+        max_size_gb: 最大文件大小（GB），默认 3.0
+        
+    Returns:
+        {
+            "valid": bool,
+            "errors": [list of error messages],
+            "duration_seconds": float or None,
+            "resolution": (width, height) or None,
+            "file_size_bytes": int,
+            "file_size_gb": float,
+        }
+    """
+    result = {
+        "valid": True,
+        "errors": [],
+        "duration_seconds": None,
+        "resolution": None,
+        "file_size_bytes": 0,
+        "file_size_gb": 0.0,
+    }
+    
+    # 检查文件存在
+    if not os.path.exists(file_path):
+        result["valid"] = False
+        result["errors"].append(f"视频文件不存在: {file_path}")
+        return result
+    
+    # 检查文件大小
+    file_size = os.path.getsize(file_path)
+    result["file_size_bytes"] = file_size
+    result["file_size_gb"] = file_size / (1024**3)
+    
+    if file_size > max_size_gb * (1024**3):
+        result["valid"] = False
+        result["errors"].append(
+            f"视频文件过大: {result['file_size_gb']:.2f}GB (上限 {max_size_gb}GB)"
+        )
+    
+    # 检查视频时长
+    duration = get_video_duration(file_path)
+    if duration is not None:
+        result["duration_seconds"] = duration
+        if duration > max_duration:
+            result["valid"] = False
+            result["errors"].append(
+                f"视频时长超标: {duration:.1f}秒 (上限 {max_duration}秒 / {max_duration/60:.1f}分钟)"
+            )
+    else:
+        result["valid"] = False
+        result["errors"].append("无法获取视频时长")
+    
+    # 检查分辨率
+    resolution = get_video_resolution(file_path)
+    if resolution is not None:
+        width, height = resolution
+        result["resolution"] = resolution
+        if width < min_width or height < min_height:
+            result["valid"] = False
+            result["errors"].append(
+                f"分辨率过低: {width}x{height} (最低要求 {min_width}x{min_height})"
+            )
+    else:
+        result["valid"] = False
+        result["errors"].append("无法获取视频分辨率")
+    
+    return result

@@ -1,6 +1,6 @@
 # ============================================================================
 # Code2Video Docker 镜像
-# 基于 Python 3.11 + Manim 依赖（LaTeX, ffmpeg, cairo, pango, 中文字体）
+# 基于 Python 3.11 + Manim 依赖（LaTeX, ffmpeg, cairo, pango, 英文字体）
 # ============================================================================
 
 FROM python:3.11-slim AS base
@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libegl1 \
     libgl1 \
     libgles2 \
-    fonts-noto-cjk \
+    fonts-noto-core \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*

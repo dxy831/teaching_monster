@@ -488,6 +488,72 @@ def _timeline_events_from_statements(statements, step_count: int, events: list[t
             _timeline_events_from_statements(branch, step_count, events)
 
 
+def _format_srt_timestamp(seconds: float) -> str:
+    total_milliseconds = max(0, int(round(seconds * 1000)))
+    hours, remainder = divmod(total_milliseconds, 3600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
+
+
+def build_section_subtitles(section_steps: List[dict], code_path: Path, start_offset: float = 0.0) -> List[dict]:
+    code_path = Path(code_path).resolve()
+    tree = ast.parse(code_path.read_text(encoding="utf-8"))
+    construct_func = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name != "TeachingScene":
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == "construct":
+                    construct_func = child
+                    break
+        if construct_func is not None:
+            break
+
+    if construct_func is None:
+        raise ValueError(f"No construct() method found in {code_path}")
+
+    events: list[tuple[str, float]] = []
+    _timeline_events_from_statements(construct_func.body, len(section_steps), events)
+
+    subtitles: List[dict] = []
+    current_time = float(start_offset)
+    for event_type, payload in events:
+        if event_type == "audio":
+            step = section_steps[int(payload)]
+            duration = float(step.get("audio_duration", 0) or 0)
+            subtitles.append(
+                {
+                    "start": current_time,
+                    "end": current_time + duration,
+                    "text": step.get("spoken_script") or step.get("screen_text") or "",
+                }
+            )
+            current_time += duration
+        elif event_type == "silence":
+            current_time += float(payload)
+
+    return subtitles
+
+
+def subtitles_to_srt(subtitles: List[dict]) -> str:
+    blocks = []
+    for index, item in enumerate(subtitles, start=1):
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        blocks.append(
+            f"{index}\n{_format_srt_timestamp(item['start'])} --> {_format_srt_timestamp(item['end'])}\n{text}"
+        )
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def save_srt(subtitles: List[dict], output_path: Path) -> Path:
+    output_path = Path(output_path).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(subtitles_to_srt(subtitles), encoding="utf-8")
+    return output_path
+
+
 def build_section_narration_track(section_steps: List[dict], code_path: Path, output_path: Path) -> Path:
     code_path = Path(code_path).resolve()
     output_path = Path(output_path).resolve()

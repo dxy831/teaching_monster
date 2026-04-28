@@ -6,16 +6,50 @@ import asyncio
 from uuid import uuid4
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from celery.result import AsyncResult
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 import redis.asyncio as aioredis
 
 from ..auth import verify_api_key
 from ..config import settings
-from ..schemas.request import VideoGenerateRequest, EventType
+from ..schemas.request import (
+    VideoGenerateRequest,
+    CompetitionGenerateRequest,
+    CompetitionGenerateResponse,
+    EventType,
+)
+from ..tasks.celery_app import celery_app
 from ..tasks.video_tasks import generate_video_task
+from ..utils.file_utils import get_video_path
 
 router = APIRouter(prefix="/api/v1", tags=["视频生成"])
+
+
+async def _wait_for_task_result(task_id: str, timeout: int = 1800, interval: float = 2.0):
+    """等待任务完成（比赛规范：30 分钟内）"""
+    start_time = asyncio.get_event_loop().time()
+    while True:
+        result = AsyncResult(task_id, app=celery_app)
+        if result.ready():
+            if result.successful():
+                return result.result
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(result.result)
+            )
+
+        if asyncio.get_event_loop().time() - start_time > timeout:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="比赛任务超时"
+            )
+
+        await asyncio.sleep(interval)
+
+
+def _build_public_file_url(request: Request, filename: str) -> str:
+    return str(request.url_for("public_download_file", filename=filename))
 
 
 async def sse_event_generator(channel_name: str) -> AsyncGenerator[str, None]:
@@ -37,8 +71,8 @@ async def sse_event_generator(channel_name: str) -> AsyncGenerator[str, None]:
     try:
         await pubsub.subscribe(channel_name)
         
-        # 设置超时时间（1小时）
-        timeout = 3600
+        # 设置超时时间（比赛规范：30 分钟）
+        timeout = 1800
         start_time = asyncio.get_event_loop().time()
         
         while True:
@@ -159,6 +193,51 @@ async def generate_video(
             "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
             "X-Task-ID": task.id,  # 返回 Celery 任务 ID
         }
+    )
+
+
+@router.post("/competition/generate", response_model=CompetitionGenerateResponse)
+async def generate_competition_video(
+    request: CompetitionGenerateRequest,
+    raw_request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """比赛制式同步视频生成接口。"""
+    channel_name = f"competition_video_task_{uuid4().hex}"
+    request_data = {
+        "request_id": request.request_id,
+        "course_requirement": request.course_requirement,
+        "student_persona": request.student_persona,
+        "competition_mode": True,
+    }
+
+    try:
+        task = generate_video_task.delay(request_data, channel_name)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"任务队列不可用: {str(e)}"
+        )
+
+    result = await _wait_for_task_result(task.id)
+
+    video_file = result.get("video_file")
+    if not video_file or not get_video_path(video_file):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="视频生成完成但文件不可下载"
+        )
+
+    subtitle_file = result.get("subtitle_file")
+    subtitle_url = None
+    if subtitle_file and get_video_path(subtitle_file):
+        subtitle_url = _build_public_file_url(raw_request, subtitle_file)
+
+    return CompetitionGenerateResponse(
+        request_id=request.request_id,
+        video_url=_build_public_file_url(raw_request, video_file),
+        subtitle_url=subtitle_url,
+        supplementary_url=[],
     )
 
 

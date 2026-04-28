@@ -55,6 +55,13 @@ from src.overview_scene import (
 )
 from src.cover_scene import generate_cover_manim_code
 
+# Cover title heuristics
+COVER_TITLE_WORD_THRESHOLD = 6
+COVER_TITLE_FONT_SIZE = 48
+COVER_TITLE_MAX_WIDTH = 15.0
+COVER_SUBTITLE_MAX_WORDS = 15
+COVER_SHORT_TITLE_MAX_WORDS = 4
+
 
 @dataclass
 class Section:
@@ -96,8 +103,10 @@ class RunConfig:
     duration: int = 5
     # 用户个性化配置
     user_profile: Optional[UserProfile] = None
-    # 强制大纲难度（入门/中等/进阶），若为空则由画像推断
+    # 强制大纲难度（simple/medium/hard），若为空则由画像推断
     forced_difficulty_level: Optional[str] = None
+    subject: str = "computer_science"
+    render_quality: str = "-ql"
 
 
 class TeachingVideoAgent:
@@ -129,6 +138,8 @@ class TeachingVideoAgent:
         self.max_mllm_fix_bugs_tries = cfg.max_mllm_fix_bugs_tries
         self.forced_difficulty_level = cfg.forced_difficulty_level
         self.duration = cfg.duration
+        self.subject = cfg.subject or "computer_science"
+        self.render_quality = cfg.render_quality or "-ql"
         self.use_assets = cfg.use_assets
         self.API = cfg.api
         self.feedback_rounds = cfg.feedback_rounds
@@ -140,7 +151,7 @@ class TeachingVideoAgent:
         self.max_mllm_fix_bugs_tries = cfg.max_mllm_fix_bugs_tries
         
         # 用户个性化配置
-        self.user_profile = cfg.user_profile or get_default_profile()
+        self.user_profile = cfg.user_profile or get_default_profile(self.subject)
 
         """2. Path for output"""
         self.output_dir = get_output_dir(idx=idx, knowledge_point=self.learning_topic, base_dir=folder)
@@ -184,6 +195,76 @@ class TeachingVideoAgent:
             self.token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
             self.token_usage["total_tokens"] += usage.get("total_tokens", 0)
         return response
+
+    def _normalize_cover_text(self, text: str) -> str:
+        normalized = (text or "").strip()
+        if len(normalized) >= 2 and ((normalized[0] == '"' and normalized[-1] == '"') or (normalized[0] == "'" and normalized[-1] == "'")):
+            normalized = normalized[1:-1].strip()
+        return normalized
+
+    def _titles_are_duplicate(self, title1: str, title2: str) -> bool:
+        return title1.strip().lower() == title2.strip().lower()
+
+    def _does_text_fit_in_cover(self, text: str) -> bool:
+        if not text:
+            return False
+        try:
+            from manim import Text
+
+            rendered = Text(text, font="Noto Sans", font_size=COVER_TITLE_FONT_SIZE)
+            return rendered.width <= COVER_TITLE_MAX_WIDTH
+        except Exception as e:
+            # Fallback to a conservative heuristic when Manim font metrics are unavailable
+            return len(text) <= 40
+
+    def _generate_cover_subtitle(self, title: str) -> str:
+        prompt = f"""
+You are a concise, user-centered educational video cover copywriter.
+Learner profile:
+{self.user_profile.get_stage2_prompt()}
+
+Main title: {title}
+
+Produce a single subtitle phrase in the same language as the title.
+Requirements:
+- No more than {COVER_SUBTITLE_MAX_WORDS} words.
+- Keep it descriptive and aligned to the learner profile.
+- Do not include quotes or extra explanation.
+"""
+        subtitle = self._request_api_and_track_tokens(prompt, max_tokens=80)
+        return self._normalize_cover_text(subtitle)
+
+    def _generate_short_cover_title(self, topic: str) -> str:
+        prompt = f"""
+You are a concise educational cover headline writer.
+Learner profile:
+{self.user_profile.get_stage2_prompt()}
+
+Original topic title: {topic}
+
+Generate a short main cover title of {COVER_SHORT_TITLE_MAX_WORDS} words or fewer that preserves the core concept.
+Do not include quotes or extra explanation.
+"""
+        result = self._request_api_and_track_tokens(prompt, max_tokens=60)
+        short_title = self._normalize_cover_text(result)
+        if not short_title:
+            return topic
+        if len(short_title.split()) > COVER_SHORT_TITLE_MAX_WORDS:
+            short_title = " ".join(short_title.split()[:COVER_SHORT_TITLE_MAX_WORDS])
+        return short_title
+
+    def _resolve_cover_title_pair(self) -> tuple[str, str]:
+        main_title = self.learning_topic
+        subtitle = self.outline.topic
+        if self._titles_are_duplicate(main_title, subtitle):
+            if len(main_title.split()) <= COVER_TITLE_WORD_THRESHOLD and self._does_text_fit_in_cover(main_title):
+                generated_subtitle = self._generate_cover_subtitle(main_title)
+                if not generated_subtitle or self._titles_are_duplicate(generated_subtitle, main_title):
+                    generated_subtitle = f"Learn about {main_title}"
+                return main_title, generated_subtitle
+            short_title = self._generate_short_cover_title(main_title)
+            return short_title, subtitle
+        return main_title, subtitle
 
     def _request_video_api_and_track_tokens(self, prompt, video_path):
         """Wraps video API requests and accumulates token usage automatically"""
@@ -303,11 +384,12 @@ class TeachingVideoAgent:
                 else None
             )
             prompt1 = get_prompt1_outline(
-                knowledge_point=self.learning_topic, 
-                duration=self.duration, 
+                knowledge_point=self.learning_topic,
+                duration=self.duration,
                 reference_image_path=refer_img_path,
                 user_profile=self.user_profile,
                 forced_difficulty_level=self.forced_difficulty_level,
+                subject=self.subject,
             )
 
             print(f"📝 正在生成大纲...")
@@ -377,7 +459,8 @@ class TeachingVideoAgent:
             prompt2 = get_prompt2_storyboard(
                 outline=json.dumps(self.outline.__dict__, ensure_ascii=False, indent=2),
                 reference_image_path=refer_img_path,
-                user_profile=self.user_profile
+                user_profile=self.user_profile,
+                subject=self.subject,
             )
 
             for attempt in range(1, self.max_regenerate_tries + 1):
@@ -498,9 +581,10 @@ class TeachingVideoAgent:
         # 先生成 TTS 音频（封面有旁白了）
         section_steps = self.prepare_section_steps(section)
 
+        cover_title, cover_subtitle = self._resolve_cover_title_pair()
         code = generate_cover_manim_code(
-            topic=self.outline.topic,
-            short_title=self.learning_topic,
+            topic=cover_subtitle,
+            short_title=cover_title,
             section_steps=section_steps,
         )
 
@@ -588,7 +672,13 @@ class TeachingVideoAgent:
             if line == "让我们开始吧！":
                 continue
 
-            # 新格式：提取 "第X部分，标题" 中的标题部分
+            # 英文格式：提取 "the first part, Title" 中的标题部分
+            en_match = _re.match(r"^the \w+ part, (.+)$", line, _re.IGNORECASE)
+            if en_match:
+                merged_titles.append(en_match.group(1).strip())
+                continue
+
+            # 中文格式（兼容旧数据）：提取 "第X部分，标题" 中的标题部分
             match = _re.match(r"^第[一二三四五六七八九十\d]+部分，(.+)$", line)
             if match:
                 merged_titles.append(match.group(1).strip())
@@ -725,12 +815,13 @@ class TeachingVideoAgent:
         else:
             section_steps = self.prepare_section_steps(section)
             code_gen_prompt = get_prompt3_code(
-                regenerate_note=regenerate_note, 
-                section=section, 
+                regenerate_note=regenerate_note,
+                section=section,
                 section_steps=section_steps,
                 base_class=base_class,
                 user_profile=self.user_profile,
-                estimated_duration=section.estimated_duration  # 传递预计时长
+                estimated_duration=section.estimated_duration,  # 传递预计时长
+                subject=self.subject,
             )
 
         response = self._request_api_and_track_tokens(code_gen_prompt, max_tokens=self.max_code_token_length)
@@ -837,6 +928,8 @@ class TeachingVideoAgent:
         video_patterns_check = [
             self.output_dir / "media" / "videos" / f"{code_file_check.replace('.py', '')}" / "480p15" / f"{scene_name_check}.mp4",
             self.output_dir / "media" / "videos" / "480p15" / f"{scene_name_check}.mp4",
+            self.output_dir / "media" / "videos" / f"{code_file_check.replace('.py', '')}" / "720p30" / f"{scene_name_check}.mp4",
+            self.output_dir / "media" / "videos" / "720p30" / f"{scene_name_check}.mp4",
             self.output_dir / "media" / "videos" / f"{code_file_check.replace('.py', '')}" / "1080p60" / f"{scene_name_check}.mp4",
             self.output_dir / "media" / "videos" / "1080p60" / f"{scene_name_check}.mp4",
         ]
@@ -870,7 +963,7 @@ class TeachingVideoAgent:
                 # 首先尝试使用代码中真实存在的 Scene 名称，否则退回到默认推断
                 scene_name = preferred_scene if preferred_scene else f"{section_id.title().replace('_', '')}Scene"
                 code_file = f"{section_id}.py"
-                cmd = [sys.executable, "-m", "manim", "-ql", str(code_file), scene_name]
+                cmd = [sys.executable, "-m", "manim", self.render_quality, str(code_file), scene_name]
 
                 result = subprocess.run(cmd, capture_output=True, text=True, cwd=self.output_dir, timeout=2000)
 
@@ -878,6 +971,8 @@ class TeachingVideoAgent:
                     video_patterns = [
                         self.output_dir / "media" / "videos" / f"{code_file.replace('.py', '')}" / "480p15" / f"{scene_name}.mp4",
                         self.output_dir / "media" / "videos" / "480p15" / f"{scene_name}.mp4",
+                        self.output_dir / "media" / "videos" / f"{code_file.replace('.py', '')}" / "720p30" / f"{scene_name}.mp4",
+                        self.output_dir / "media" / "videos" / "720p30" / f"{scene_name}.mp4",
                         self.output_dir / "media" / "videos" / f"{code_file.replace('.py', '')}" / "1080p60" / f"{scene_name}.mp4",
                         self.output_dir / "media" / "videos" / "1080p60" / f"{scene_name}.mp4",
                     ]

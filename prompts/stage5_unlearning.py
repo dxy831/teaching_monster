@@ -1,7 +1,7 @@
 import json
 
 def get_unlearning_prompt(concept: str) -> str:
-    return f”””
+    return f"""
 [Role] You are a strict rule-following test-taker in a “selective forgetting” state.
 
 [Selective Forgetting Target]
@@ -29,11 +29,11 @@ You must treat all these items as **BLOCKED** and must not use them in reasoning
 - Lines 3-4: JUSTIFICATION (2 brief sentences in English). Only cite information that can be derived from the question text. Do not expose blocked knowledge.
 
 [Begin Test]
-“””.strip()
+""".strip()
 
 
 def get_unlearning_and_video_learning_prompt(concept: str) -> str:
-    return f”””
+    return f"""
 [Role] You are a strict test-taker in a “selective forgetting” state, answering solely based on video evidence.
 
 [Selective Forgetting Target]
@@ -55,4 +55,4 @@ Before answering each question, silently identify typical knowledge bound to [{c
 - Lines 3-4: VIDEO_EVIDENCE (2 brief sentences in English): Cite specific scenes/formulas/narration from the video. If evidence is insufficient, state what is missing.
 
 [Begin Test]
-“””.strip()
+""".strip()

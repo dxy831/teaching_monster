@@ -267,7 +267,7 @@ def generate_overview_manim_code(
     for i, bt in enumerate(all_bullet_texts):
         safe_bt = bt.replace('"', '\\"').replace("'", "\\'")
         bullet_creation_lines.append(
-            f'        bullet_{i} = Text("{safe_bt}", font="Arial", font_size=22, color="#2C1608")'
+            f'        bullet_{i} = Text("{safe_bt}", font_size=22, color="#2C1608")'
         )
     bullet_creation_code = "\n".join(bullet_creation_lines)
 
@@ -376,11 +376,11 @@ class SectionOverviewScene(TeachingScene):
         self.camera.background_color = "#FFFDF4"
 
         # ── Title ──
-        page_title = Text("Course Navigation", font="Arial", font_size=28, color="#BE8944", weight="BOLD")
+        page_title = Text("Course Navigation", font_size=28, color="#BE8944", weight="BOLD")
         page_title.to_edge(UP, buff=0.5)
 
         # ── Subtitle "Content Overview" ──
-        subtitle = Text("Content Overview", font="Arial", font_size=24, color="#7B4B2A", weight="BOLD")
+        subtitle = Text("Content Overview", font_size=24, color="#7B4B2A", weight="BOLD")
         subtitle.move_to([0, 2.0, 0])
 
         # Underline decoration

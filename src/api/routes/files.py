@@ -2,17 +2,49 @@
 文件下载路由
 """
 
-import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..auth import verify_api_key
-from ..config import settings
 from ..utils.file_utils import get_video_path, get_metadata, get_file_size
 
 router = APIRouter(prefix="/api/v1", tags=["文件下载"])
+
+
+def _get_media_type(filename: str) -> str:
+    if filename.endswith(".mp4"):
+        return "video/mp4"
+    if filename.endswith(".webm"):
+        return "video/webm"
+    if filename.endswith(".avi"):
+        return "video/x-msvideo"
+    if filename.endswith(".srt"):
+        return "application/x-subrip"
+    if filename.endswith(".vtt"):
+        return "text/vtt"
+    if filename.endswith(".json"):
+        return "application/json"
+    return "application/octet-stream"
+
+
+async def _build_file_response(file_path: str, filename: str, range_header: Optional[str]):
+    file_size = get_file_size(file_path)
+    media_type = _get_media_type(filename)
+
+    if range_header:
+        return await _handle_range_request(file_path, file_size, range_header, media_type)
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+        }
+    )
 
 
 @router.get("/files/{filename}")
@@ -40,40 +72,31 @@ async def download_file(
     """
     # 获取文件路径
     file_path = get_video_path(filename)
-    
+
     if not file_path:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"文件不存在: {filename}"
         )
-    
-    # 获取文件大小
-    file_size = get_file_size(file_path)
-    
-    # 确定 MIME 类型
-    if filename.endswith(".mp4"):
-        media_type = "video/mp4"
-    elif filename.endswith(".webm"):
-        media_type = "video/webm"
-    elif filename.endswith(".avi"):
-        media_type = "video/x-msvideo"
-    else:
-        media_type = "application/octet-stream"
-    
-    # 处理 Range 请求
-    if range:
-        return await _handle_range_request(file_path, file_size, range, media_type)
-    
-    # 返回完整文件
-    return FileResponse(
-        path=file_path,
-        media_type=media_type,
-        filename=filename,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_size),
-        }
-    )
+
+    return await _build_file_response(file_path, filename, range)
+
+
+@router.get("/public/files/{filename}")
+async def public_download_file(
+    filename: str,
+    range: Optional[str] = Header(None)
+):
+    """比赛专用公开下载直链。"""
+    file_path = get_video_path(filename)
+
+    if not file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"文件不存在: {filename}"
+        )
+
+    return await _build_file_response(file_path, filename, range)
 
 
 async def _handle_range_request(
@@ -184,6 +207,30 @@ async def get_file_metadata(
     return metadata
 
 
+@router.head("/public/files/{filename}")
+async def public_head_file(filename: str):
+    """公开直链的 HEAD 请求。"""
+    file_path = get_video_path(filename)
+
+    if not file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"文件不存在: {filename}"
+        )
+
+    file_size = get_file_size(file_path)
+    media_type = _get_media_type(filename)
+
+    return StreamingResponse(
+        iter([]),
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+        }
+    )
+
+
 @router.head("/files/{filename}")
 async def head_file(
     filename: str,
@@ -203,13 +250,8 @@ async def head_file(
         )
     
     file_size = get_file_size(file_path)
-    
-    # 确定 MIME 类型
-    if filename.endswith(".mp4"):
-        media_type = "video/mp4"
-    else:
-        media_type = "application/octet-stream"
-    
+    media_type = _get_media_type(filename)
+
     return StreamingResponse(
         iter([]),  # 空内容
         media_type=media_type,

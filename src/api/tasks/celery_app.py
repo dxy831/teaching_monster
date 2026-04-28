@@ -40,9 +40,9 @@ celery_app.conf.update(
         "src.api.tasks.video_tasks.*": {"queue": "video_generation"},
     },
     
-    # 任务时间限制
-    task_time_limit=3600,  # 1 小时硬限制
-    task_soft_time_limit=3000,  # 50 分钟软限制
+    # 任务时间限制（比赛规范：30分钟内完成）
+    task_time_limit=1800,  # 30 分钟硬限制
+    task_soft_time_limit=1650,  # 27.5 分钟软限制（给预警时间）
     
     # 结果后端配置
     result_backend_transport_options={

@@ -99,6 +99,32 @@ class VideoGenerateRequest(BaseModel):
         }
 
 
+class CompetitionGenerateRequest(BaseModel):
+    """比赛制式的视频生成请求"""
+
+    request_id: str = Field(..., description="请求唯一标识")
+    course_requirement: str = Field(..., description="课程需求与学习目标")
+    student_persona: str = Field(..., description="学生背景自述")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "request_id": "req-001",
+                "course_requirement": "Create an AP-level computer science lesson on binary search, including intuition, step-by-step trace, complexity, and a final review.",
+                "student_persona": "I am a high school student with basic programming experience but I have never learned binary search before."
+            }
+        }
+
+
+class CompetitionGenerateResponse(BaseModel):
+    """比赛制式的视频生成响应"""
+
+    request_id: str = Field(..., description="请求唯一标识")
+    video_url: str = Field(..., description="生成视频的公开下载直链")
+    subtitle_url: Optional[str] = Field(None, description="字幕文件公开下载直链")
+    supplementary_url: List[str] = Field(default_factory=list, description="辅助材料下载直链列表")
+
+
 class SSEEvent(BaseModel):
     """SSE 事件模型"""
     

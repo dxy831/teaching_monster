@@ -9,7 +9,8 @@ def get_prompt3_code(
     section_steps,
     base_class: str,
     user_profile: Optional[UserProfile] = None,
-    estimated_duration: Optional[int] = None
+    estimated_duration: Optional[int] = None,
+    subject: str = "computer_science",
 ):
     """
     Generate prompt for Manim code generation
@@ -27,11 +28,12 @@ def get_prompt3_code(
     """
     # If no user profile provided, use default profile
     if user_profile is None:
-        user_profile = get_default_profile()
+        user_profile = get_default_profile(subject)
 
     # Get AI-generated user profile prompt
     profile_prompt = user_profile.get_stage3_prompt()
     target_language = user_profile.get_language()
+    subject = (subject or getattr(user_profile, "subject", "computer_science") or "computer_science").strip().lower()
     total_audio_duration = sum(step.get("audio_duration", 0) for step in section_steps)
 
     # Generate duration guidance
@@ -51,15 +53,51 @@ def get_prompt3_code(
     - **⚠️ Must Strictly Follow**: Narration timeline uses `audio_duration` as the only ground truth, never compress it yourself!
 """
 
+    subject_prompt = """
+    - Use `self.create_code_block()` for code displays.
+    - It is acceptable to show runnable source code and code-line highlighting where useful.
+    - **Visualization Strategy: code_trace_first** — Prioritize code blocks with execution traces. Use SurroundingRectangle to highlight current code lines. Track variable states with labeled boxes.
+""" if subject == "computer_science" else f"""
+    - Strictly forbidden to generate `self.create_code_block(`, `Code(`, or any code-pane layout.
+    - Use diagrams, formulas, labels, arrows, tables, flow/process visuals, and highlighted objects only.
+    - The final scene should still be a normal `TeachingScene` with `setup_layout()` and `play_synced_step()`, but without any code display objects.
+    - **Visualization Strategy: {"symbolic_algebra" if subject == "math" else "diagram_first"}**
+    {"- Prioritize MathTex symbolic transformations, NumberPlane/Axes with FunctionGraph, geometric constructions (Polygon, Arc, Angle). Show algebraic derivation steps sequentially." if subject == "math" else ""}
+    {"- Prioritize Arrow (force vectors with labeled magnitudes), Axes/NumberPlane (motion graphs), Dot + Arrow (free-body diagrams), MathTex (formulas with units). Every physical quantity must include its unit on screen." if subject == "physics" else ""}
+    {"- Prioritize RoundedRectangle + Text labels (structures), Arrow chains (processes), side-by-side VGroup columns (comparisons). Animate processes chronologically. Every technical term must have a labeled Text object on first use." if subject == "biology" else ""}
+"""
+
+    zpd_pacing_prompt = """
+    ## ZPD Pacing Requirements (MANDATORY for all subjects)
+    - The first narration (play_synced_step index 0) of each section should connect to prior knowledge (e.g., "We've seen that... now let's explore...").
+    - Each section should advance exactly ONE core new concept. If the storyboard packs multiple ideas, split them across batches.
+    - Before introducing a new concept, provide a motivation sentence explaining WHY this concept matters or what problem it solves.
+    - The concept definition must appear BEFORE the example — never reverse this order.
+    - The last narration of the section should bridge to the next section's topic.
+    """
+
     return f"""
     **CRITICAL: All output content (code, comments, lecture_lines) MUST be in English.**
 
-    You are a Python expert proficient in Manim. Please write code to generate a video segment that **explains complex algorithm execution logic**.
+    You are a Python expert proficient in Manim. Write scene code for an educational video segment.
+    Subject: {subject}
 
     {regenerate_note}
     {duration_guidance}
 
     {profile_prompt}
+
+    ## Subject-specific rules
+    {subject_prompt}
+
+    {zpd_pacing_prompt}
+
+    ## 🔴 Factual Accuracy in Manim Code (MANDATORY)
+    - Every formula rendered via MathTex MUST be exactly correct — no invented notation or wrong constants.
+    - Physical quantities must include units in MathTex (e.g., `r"F = 10 \\text{{ N}}"` not just `r"F = 10"`).
+    - Biological terms in Text labels must use standard nomenclature (e.g., "phospholipid bilayer" not "cell cover").
+    - Mathematical derivation steps must be logically ordered — no skipping steps.
+    - If the narration states a fact or formula, the corresponding visual MUST match exactly.
 
     ## 🔴🔴🔴 Key Rules Summary (Must Read First!) 🔴🔴🔴
 
@@ -109,7 +147,7 @@ def get_prompt3_code(
 
     # ❌ Wrong way 2: Writing "checkmark" or "cross" in comments then using Text
     # Red cross indicates no swap needed
-    wrong_mark = Text("✗", font="Arial", font_size=28, color="#C84A2B")  # ❌ Wrong!
+    wrong_mark = Text("✗", font_size=28, color="#C84A2B")  # ❌ Wrong!
     ```
 
     **🔍 Self-check: If your code contains any of the following, must change to MathTex:**
@@ -138,13 +176,13 @@ def get_prompt3_code(
 
     ```python
     # ❌ Wrong: Entire sentence as Text will cause log₂n / O(log n) and other symbols to render abnormally
-    Text("Recursive version is O(log n), max recursion depth is log₂n", font="Arial", font_size=20, color="#2C1608")
+    Text("Recursive version is O(log n), max recursion depth is log₂n", font_size=20, color="#2C1608")
 
     # ✅ Correct: English text uses Text, mathematical fragments use MathTex, then combine
     lecture_line = VGroup(
-        Text("Recursive version is", font="Arial", font_size=20, color="#2C1608"),
+        Text("Recursive version is", font_size=20, color="#2C1608"),
         MathTex(r"O(\log n)", color="#2C1608").scale(0.65),
-        Text(", max recursion depth is", font="Arial", font_size=20, color="#2C1608"),
+        Text(", max recursion depth is", font_size=20, color="#2C1608"),
         MathTex(r"\log_2 n", color="#2C1608").scale(0.65)
     ).arrange(RIGHT, buff=0.06, aligned_edge=DOWN)
     ```
@@ -170,9 +208,9 @@ def get_prompt3_code(
 
     **If you must display formulas, put them in the right-side animation area using `MathTex`, don't write them into `setup_layout()`'s lecture_lines.**
 
-    ### Rule 2: Code blocks must use self.create_code_block()
+    ### Rule 2: Code blocks must use self.create_code_block() when code display is allowed
 
-    **🔴 Strictly forbidden to manually create Code objects! Must use the `self.create_code_block()` method provided by the base class!**
+    **🔴 Strictly forbidden to manually create Code objects. If the subject requires code display, you must use the `self.create_code_block()` method provided by the base class.**
 
     ```python
     # ✅ Correct: Use self.create_code_block() to create code blocks
@@ -251,8 +289,7 @@ def get_prompt3_code(
     ```python
     # ✅ Correct: Lecture text must use font_size=20
     new_lecture_texts = [
-        Text(line, font="Arial", font_size=20, color="#2C1608")
-        for line in new_lecture_lines
+        Text(line, font_size=20, color="#2C1608")
     ]
     new_lecture = VGroup(*new_lecture_texts).arrange(DOWN, aligned_edge=LEFT, buff=0.3)
     new_lecture.align_to(lecture_pos, UL)
@@ -395,9 +432,9 @@ def get_prompt3_code(
         obj.shift(UP * (RIGHT_BOTTOM_Y - obj.get_bottom()[1] + 0.2))
     ```
 
-    **【🚨🚨🚨 Code Display - Must use self.create_code_block() 🚨🚨🚨】**
+    **【🚨🚨🚨 Code Display - Must use self.create_code_block() when code is required 🚨🚨🚨】**
 
-    ⚠️ **Strictly forbidden to use Text() to display code! Must use base class's `self.create_code_block()` method!**
+    ⚠️ **If the lesson includes code, strictly forbidden to use Text() to display code; you must use the base class's `self.create_code_block()` method. For non-computer-science subjects, do not display code at all.**
 
     ```python
     # ✅✅✅ The only correct way ✅✅✅
@@ -433,25 +470,29 @@ def algo(data):
     ```
 
     ### 2. Interaction and Logic Expression
-    - **Code highlighting**: Use `SurroundingRectangle` for precise framing, forbidden to use `Indicate` to highlight code blocks
-    - **Breathing timing**: After text highlighting ends, must `self.wait(0.5)`, first top-left text → pause → then right-side animation
-    - **Logic externalization**: Conditional judgment displays `MathTex("5 > 3")`, turns green if true/red if false
+    - **Code highlighting**: Use `SurroundingRectangle` for precise framing, forbidden to use `Indicate` to highlight code blocks.
+    - **No Orphan Narrations**: Every time a line is spoken, there MUST be a corresponding visual change or highlight on the right side if the narration refers to code or a diagram.
+    - **Breathing timing**: After text highlighting ends, must `self.wait(0.5)`, first top-left text → pause → then right-side animation.
+    - **Logic externalization**: Conditional judgment displays `MathTex("5 > 3")`, turns green if true/red if false.
     - **Recursion**: Maintain Stack VGroup in screen corner, add rectangle for each recursion level, remove on return
 
     ### 🔴 Rule 6.1: Lecture text must be automatically highlighted through audio steps 🔴
 
     **Every sentence of lecture text must be completed through `play_synced_step()`:**
-    - When audio starts playing, corresponding sentence starts highlighting
-    - Highlighting lasts for entire `audio_duration`
-    - After narration ends, restore original color `#2C1608`
-    - Strictly forbidden to skip any sentence
+    - When audio starts playing, corresponding sentence starts highlighting.
+    - **Visual Sync Requirement**: Any right-side highlighting (e.g., `SurroundingRectangle` on code or diagrams) MUST be passed into `play_synced_step` alongside the audio.
+    - **Group Highlighting**: If a speaker narrates multiple lines or a block of logic, all involved on-screen elements (lines of code, specific nodes) MUST be highlighted simultaneously and stay highlighted for the duration of that audio step.
+    - Highlighting lasts for entire `audio_duration`.
+    - After narration ends, restore original color `#2C1608`.
+    - Strictly forbidden to skip any sentence or visual emphasis mentioned in the storyboard.
 
     ```python
+    # ✅ Correct: Right-side highlight syncs perfectly with spoken line 1
     self.play_synced_step(
-        0,
-        steps[0]["audio_path"],
-        steps[0]["audio_duration"],
-        FadeIn(some_right_side_obj)
+        1,
+        steps[1]["audio_path"],
+        steps[1]["audio_duration"],
+        Transform(highlight, SurroundingRectangle(code_lines[1], color=YELLOW))
     )
     ```
 
@@ -466,12 +507,12 @@ def algo(data):
     cells = VGroup()
     for c in chars:
         sq = Square(side_length=0.5, color="#e4c8a6", fill_color="#fff7e8", fill_opacity=0.8)
-        txt = Text(c, font="Arial", font_size=18, color="#2C1608")
+        txt = Text(c, font_size=18, color="#2C1608")
         txt.move_to(sq)  # Text stacked at square center
         cells.add(VGroup(sq, txt))  # Combine into one unit
     cells.arrange(RIGHT, buff=0.05)  # Arrange the whole
 
-    label = Text("s = ", font="Arial", font_size=20, color="#2C1608")
+    label = Text("s = ", font_size=20, color="#2C1608")
     row = VGroup(label, cells).arrange(RIGHT, buff=0.2)
 
     # ❌ Wrong: Squares and text separately put into VGroup then arrange (text will be pushed to the right!)
@@ -497,7 +538,7 @@ def algo(data):
     ### Code Specifications
     - Inherit `TeachingScene`, define variables before use
     - Pacing: `self.wait(1)` gives audience thinking time
-    - Code language: **{target_language}**
+    {f'- Code language: **{target_language}**' if subject == 'computer_science' else '- No code blocks or code displays allowed for this subject'}
 
     ### Reference Code Structure
     ```python
@@ -512,7 +553,7 @@ def algo(data):
 
             # 🔴🔴🔴 First line must call setup_layout()! Set background color and basic layout 🔴🔴🔴
             self.setup_layout("{section.title}", screen_texts)
-
+""" + (f"""
             # 1. Create code block - 🔴 Must use self.create_code_block()!
             code_raw = \"\"\"# {target_language} example
 def algo(data):
@@ -571,16 +612,70 @@ def algo(data):
                     next_batch[0]["audio_path"],
                     next_batch[0]["audio_duration"]
                 )
+""" if subject == 'computer_science' else """
+            # 1. Diagrams and visual elements (NO code blocks for non-CS subjects)
+            # Use MathTex for formulas, Text for labels, Arrow/Line for relationships
+            formula = MathTex(r"C_6H_{{12}}O_6 + 6O_2 \\\\to 6CO_2 + 6H_2O", color="#9B6D0B").scale(0.7)
+            formula.move_to([3.5, 2.0, 0])
 
+            # 2. Labeled diagram with shapes
+            box1 = RoundedRectangle(width=2, height=0.8, corner_radius=0.1, color="#e4c8a6", fill_color="#fff7e8", fill_opacity=1)
+            label1 = Text("Glucose", font_size=20, color="#2C1608")
+            label1.move_to(box1)
+            step_group = VGroup(box1, label1).move_to([2.0, 0.5, 0])
+
+            box2 = RoundedRectangle(width=2, height=0.8, corner_radius=0.1, color="#c7e7aa", fill_color="#effce3", fill_opacity=1)
+            label2 = Text("Pyruvate", font_size=20, color="#2C1608")
+            label2.move_to(box2)
+            result_group = VGroup(box2, label2).move_to([5.0, 0.5, 0])
+
+            arrow = Arrow(box1.get_right(), box2.get_left(), color="#9B6D0B", buff=0.1)
+
+            # 3. Checkmark and cross marks - 🔴 Must use MathTex, strictly forbidden to use Text!
+            correct_mark = MathTex(r"\\\\checkmark", color="#478211").scale(1.2)
+            wrong_mark = MathTex(r"\\\\times", color="#C84A2B").scale(1.2)
+
+            # 🔴 Narration must use play_synced_step, based on actual audio duration
+            self.play_synced_step(
+                0,
+                steps[0]["audio_path"],
+                steps[0]["audio_duration"],
+                FadeIn(formula)
+            )
+
+            self.play_synced_step(
+                1,
+                steps[1]["audio_path"],
+                steps[1]["audio_duration"],
+                FadeIn(step_group), FadeIn(arrow), FadeIn(result_group)
+            )
+
+            self.play_synced_step(
+                2,
+                steps[2]["audio_path"],
+                steps[2]["audio_duration"],
+                Indicate(formula, color=YELLOW)
+            )
+
+            # If narration exceeds current batch, must switch left-side lecture text first
+            if len(steps) > 4:
+                next_batch = steps[4:8]
+                self.replace_lecture_lines([step["screen_text"] for step in next_batch])
+                self.play_synced_step(
+                    0,
+                    next_batch[0]["audio_path"],
+                    next_batch[0]["audio_duration"]
+                )
+""") + f"""
             self.wait(2)
     ```
 
     ### Mandatory Constraints - Fonts and Color Scheme
-    **【Font Rules】** All `Text()` must use `font="Arial"` (cross-platform English font)
+    **【Font Rules】** Do not explicitly set `font=` for `Text()` in generated scenes.
     ```python
     # ✅ Correct example
-    Text("Title text", font="Arial", font_size=28, color="#BE8944", weight="BOLD")
-    Text("Lecture text", font="Arial", font_size=20, color="#2C1608")  # Lecture text must use font_size=20
+    Text("Title text", font_size=28, color="#BE8944", weight="BOLD")
+    Text("Lecture text", font_size=20, color="#2C1608")  # Lecture text must use font_size=20
     ```
 
     **【🚨🚨🚨 Mathematical Expressions and Special Symbols - Must use MathTex! 🚨🚨🚨】**
@@ -598,7 +693,7 @@ def algo(data):
 
     # ✅ English + math mixed layout
     VGroup(
-        Text("Because:", font="Arial", font_size=20, color="#2C1608"),
+        Text("Because:",  font_size=20, color="#2C1608"),
         MathTex(r"2^7 = 128 > 100", color="#9B6D0B").scale(0.8)
     ).arrange(RIGHT, buff=0.2)
 

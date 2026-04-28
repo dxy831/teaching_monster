@@ -3,10 +3,53 @@ from typing import Optional
 from .user_profile import UserProfile, get_default_profile
 
 
+def _get_subject_visual_strategy(subject: str, target_language: str) -> str:
+    if subject == "physics":
+        return """
+    **Physics Visual Strategy (AP Physics 1 / C):**
+    - **Force & Motion**: Use `Arrow` for force vectors with labeled magnitudes and directions. Every vector must have a text label showing its name and value (e.g., "F = 10 N").
+    - **Graphs**: Use `Axes` / `NumberPlane` for motion graphs (x-t, v-t, a-t). Label both axes with quantity and unit.
+    - **Free-Body Diagrams**: Use `Dot` for the object, `Arrow` for each force, and `MathTex` for labels. Forces must be drawn from the object outward.
+    - **Formulas**: Use `MathTex` for all equations. Show derivation step-by-step with `TransformMatchingTex` or sequential `FadeIn`.
+    - **Units**: Every numerical result displayed on screen must include its unit.
+    - **FORBIDDEN**: Code blocks, code panes, execution traces — unless the section is explicitly about computational physics simulation.
+"""
+    elif subject == "biology":
+        return """
+    **Biology Visual Strategy (AP Biology):**
+    - **Structures**: Use `RoundedRectangle`, `Circle`, `Ellipse` with fill colors and `Text` labels for organelles, molecules, or organisms.
+    - **Processes**: Use sequential `Arrow` chains connecting labeled boxes to show metabolic pathways, signal cascades, or life cycles. Each step must be animated in order.
+    - **Comparisons**: Use side-by-side layouts with `VGroup` columns for comparing structures or processes (e.g., mitosis vs. meiosis, DNA vs. RNA).
+    - **Mechanism Detail**: For molecular mechanisms, animate the process chronologically — do not show the final state first.
+    - **Terminology**: Every technical term must appear as a labeled `Text` object on first use, with consistent color coding throughout the video.
+    - **FORBIDDEN**: Code blocks, code panes, execution traces — biology content must never include programming displays.
+"""
+    elif subject == "math":
+        return """
+    **Mathematics Visual Strategy (AP Calculus / Statistics):**
+    - **Coordinate Planes**: Use `NumberPlane` or `Axes` with clearly labeled axes, scales, and key points.
+    - **Functions**: Use `FunctionGraph` or `ParametricFunction` to plot curves. Highlight key features (intercepts, extrema, inflection points) with `Dot` and labels.
+    - **Symbolic Transformations**: Use `MathTex` for all formulas. Show algebraic steps sequentially using `TransformMatchingTex` or `ReplacementTransform`.
+    - **Geometric Constructions**: Use `Polygon`, `Arc`, `Angle`, `Line`, `DashedLine` for geometric proofs and illustrations.
+    - **Proof Steps**: Each step in a derivation must be a separate `MathTex` object, animated in logical order.
+    - **FORBIDDEN**: Code blocks in concept-explanation sections. Only allow code if the section explicitly covers numerical methods or computational math.
+"""
+    else:
+        return f"""
+    **Computer Science Visual Strategy (AP CS A / CS Principles):**
+    - **Code Display**: Use `self.create_code_block()` for all code. Code must be in **{target_language}** and syntactically correct.
+    - **Execution Traces**: Use `SurroundingRectangle` to highlight the current line of code. Track variable states with labeled boxes or tables.
+    - **Data Structures**: Use `Square`/`Circle` + `Text` for arrays, trees, graphs, stacks, queues. Index labels are mandatory for arrays.
+    - **State Changes**: Animate pointer movements, value swaps, and structural modifications step by step.
+    - **Complexity**: Use `MathTex` for Big-O notation and `Axes` for performance comparison charts when relevant.
+"""
+
+
 def get_prompt2_storyboard(
     outline: str,
     reference_image_path: Optional[str] = None,
-    user_profile: Optional[UserProfile] = None
+    user_profile: Optional[UserProfile] = None,
+    subject: str = "computer_science",
 ):
     """
     Generate storyboard script prompt
@@ -21,97 +64,74 @@ def get_prompt2_storyboard(
     """
     # Use default profile if none provided
     if user_profile is None:
-        user_profile = get_default_profile()
+        user_profile = get_default_profile(subject)
 
     # Get AI-generated user profile prompt
     profile_prompt = user_profile.get_stage2_prompt()
     target_language = user_profile.get_language()
+    subject = (subject or getattr(user_profile, "subject", "computer_science") or "computer_science").strip().lower()
+    code_layout_required = subject == "computer_science"
+    subject_directive = (
+        f"Use split-left layout with a {target_language} code block for algorithm explanation."
+        if code_layout_required
+        else "Do not use code panes or code blocks; use lecture text, diagrams, formulas, labels, arrows, tables, and process animations only."
+    )
 
     base_prompt = f"""
     **CRITICAL: All output content (titles, lecture_lines, animations) MUST be in English.**
 
-    You are a **Hardcore Algorithm Visualization Director**. Please convert the outline into a detailed Manim animation script.
+    You are a subject-aware teaching storyboard director. Convert the outline into a detailed Manim animation script.
 
+    Subject: {subject}
     {profile_prompt}
+
+    # 🔴 Factual Accuracy & Multimodal Consistency (MANDATORY — Competition Standard)
+
+    - Every formula, constant, term, or process shown on screen MUST exactly match the corresponding lecture_line narration. No discrepancy is allowed.
+    - If a derivation or mechanism is presented step-by-step, every step MUST have a corresponding lecture_line — no skipping steps in either narration or visuals.
+    - Physical quantities must always include units in both narration and on-screen display.
+    - Do NOT show formulas or diagrams on screen that are not explained in the narration, and vice versa.
+
+    # Subject-Specific Visual Strategy
+
+    {_get_subject_visual_strategy(subject, target_language)}
 
     # Universal Visual Mapping System
 
-    1.  **Multi-dimensional Layout Strategy**:
-        - **Smart Layout Branching**:
-          - **Case A: Pure Theory/No Code** -> Maintain current state: **Left-Right Split Layout**. Left side for lecture text, right side for visualization animations.
-          - **Case B: Code Demonstration Scenario (With Code - DEFAULT for Algorithms)** -> **Use "Split-Left Layout"**:
-            - **Rule**: For any section explaining specific algorithm steps (loops, conditionals, swaps, recursion), **must** use this mode to display code snippets. Strictly forbidden to only show code at the end.
-            - **Top-Left Area (~30% height)**: Place lecture text (Lecture Notes).
-            - **Bottom-Left Area (~70% height)**: Place **{target_language}** code snippet (Code Snippet).
-            - **Right Area (Right Half, 100% height)**: Place core visualization/animation (Main Visual).
-          - **Case C: Full Code/Pure Code (Full Code - FINAL SECTION ONLY)**:
-            - **Rule**: The last section specifically displays complete **{target_language}** source code.
-            - **Layout**: **Hide left text** (Lecture Notes opacity=0), enlarge and center code object (`scale(0.8).move_to(ORIGIN)`).
-            - **Pagination**: If code exceeds 20 lines, must split into consecutive sub-scenes (e.g., `Scene 12.1`, `Scene 12.2`).
-
-                - **Mandatory Pagination Protocol**:
-                    - **Lecture line length limit (hard constraint)**: Each lecture line should not exceed **8 English words** (including punctuation) to fit on one line; only split by semantic meaning when exceeding 8 words. **Forbidden to forcibly split complete short sentences within 8 words into two lines.**
-                    - **Lecture line batching rules (hard constraint, must execute in order)**:
-                        1) **First check if there's a code block**:
-                             - With code block (bottom-left has `create_code_block`) → Maximum **4 lines** per batch
-                             - Without code block (pure lecture + right-side animation) → Maximum **8 lines** per batch
-                        2) **Then batch by semantic completeness (priority over line limit)**:
-                             - One knowledge point can span multiple batches (suggest 2-4 batches, adaptive to duration)
-                             - **Different knowledge points cannot be forced into the same batch**
-                             - Strictly forbidden to mechanically fill 4 or 8 lines per batch
-                        3) **Finally check limit**: If exceeding 4/8 lines, only split within that knowledge point at natural semantic breakpoints, forbidden to splice across knowledge points to fill line count.
-                    - **Code volume control**: If code is too long for bottom-left area, **must** split content into consecutive sub-scenes. Better multiple pages than small text.
-        - **State Monitor (bottom/corner)**: Real-time display of variable values (Cost, Index, True/False).
-        - **Text Zoning Strategy**:
-          - **Lecture Lines (narration subtitles)**: Must be strictly limited to the "Subtitle Bar" at the bottom of the screen (Bottom 15% area). Strictly forbidden to place long explanatory text in screen center or mix with graphics.
-          - **Labels**: Labels following objects must be brief (Max 2-3 words).
-          - **Title**: Each section's title fixed at top-left or top, cannot obstruct Main Visual Area.
+    1.  **Layout Strategy**:
+        - {subject_directive}
+        - For computer_science sections that explain step-by-step logic, code snippets should appear throughout the relevant sections, not only at the end.
+        - For non-computer-science subjects, the left side should remain lecture-focused and the right side should use visuals only.
 
     2.  **Abstract Concept Materialization**:
-        - **Reference/Pointer**: Must be drawn as arrows (Arrow).
-        - **Recursion**: Must be drawn as **Call Stack**, represented by stacked rectangular blocks, with parameter values annotated beside.
-        - **Comparison/Condition**: Must display temporary mathematical inequalities on screen (e.g., `dist[B] > new_dist`), disappear after evaluation.
-        - **Memoization/Cache**: Draw as a table (Table/Grid), highlight and flash when hit.
+        - Use arrows, labels, tables, formulas, comparison markers, and highlighted objects to show reasoning.
+        - For non-computer-science subjects, prefer phenomenon diagrams, process flows, structure comparisons, and worked-example boards.
 
     3.  **Script Requirements**:
-        - Each narration line (Lecture Line) must correspond to code explanation.
-        - Each animation must correspond to data changes (Create, Transform, FadeOut).
-        - **Pacing Control**: Adjust according to animation pacing requirements in user profile.
+        - Each lecture line must map to a visible step in the animation.
+        - **Precision Highlighting Core Rule**: The "highlight" action in animations MUST precisely match the content of the current `lecture_lines`. If the narration explains multiple lines of code or concepts simultaneously, they MUST be highlighted together in the same step.
+        - Each animation should correspond to a concept change, process step, comparison, or visual emphasis.
+        - Keep the pacing aligned with the user profile.
+        - **NEVER skip explaining on-screen content**: If a new object/code appears, there must be a corresponding lecture line and animation step to explain/highlight it.
 
     4.  **Duration Planning**:
-        - Each section must include `estimated_duration` field, unit in **seconds**.
-        - Duration estimation rules:
-          - Each lecture_line approximately 3-5 seconds (based on text length)
-          - Each complex animation approximately 2-4 seconds
-          - Simple animations (FadeIn/FadeOut) approximately 0.5-1 seconds
-          - Code display pages need additional 3-5 seconds for viewer reading
-        - Scene introduction (intro) typically 30-60 seconds
-        - Core algorithm demonstration sections typically 45-90 seconds
-        - Code display sections typically 20-40 seconds
-        - **Important**: Duration estimation should be conservative, better to overestimate than underestimate, ensure viewers have sufficient time to understand
+        - Each section must include `estimated_duration` in seconds.
+        - Estimate conservatively so learners have time to follow the explanation.
 
-    5.  **Language Adaptation Requirements**:
-        - All code examples must use **{target_language}**
-        - Code syntax highlighting should adapt to {target_language} syntax
+    5.  **Subject Constraints**:
+        - For computer_science, code examples must use **{target_language}**.
+        - For non-computer-science subjects, animation descriptions must not require code displays or full-code sections.
+
+    6.  **ZPD Pacing Requirements**:
+        - The first lecture_line of each section should activate prior knowledge (e.g., "We already know that... so what happens when...?").
+        - Each section should introduce only ONE core new concept — avoid packing multiple new ideas.
+        - Between sections, include a bridging sentence that connects the completed topic to the next one.
 
     ## Input Outline
     {outline}
     """
 
-    base_prompt += """
-    
-    ## ⚠️⚠️⚠️ JSON Output Format Requirements (MUST STRICTLY FOLLOW) ⚠️⚠️⚠️
-
-    **🚨 Key Rules:**
-    1. **Output pure JSON only**, do not add any explanatory text, markdown markers, or comments
-    2. **Escape quotes in strings**: If string content contains double quotes `"`, must write as `\\"`
-    3. **Escape newlines in strings**: Use `\\n` instead of actual newlines
-    4. **No comma after last array element**
-    5. **All strings must use double quotes**, not single quotes
-    6. **Ensure JSON can be correctly parsed by Python's json.loads()**
-    7. **Please output JSON directly, do not wrap with ```json ```**
-    8. **Note: In JSON string content, strictly forbidden to have unescaped double quotes ("), if quoting is needed, use single quotes (') instead.**
-
+    cs_json_example = """
     **✅ Correct JSON format example:**
     ```json
     {
@@ -135,20 +155,81 @@ def get_prompt2_storyboard(
                 "title": "Algorithm Core Steps",
                 "estimated_duration": 60,
                 "lecture_lines": [
-                    "Explanation step 1",
-                    "Explanation step 2",
-                    "Explanation step 3"
+                    "First, we define the algorithm function.",
+                    "Then, we enter a loop to process data.",
+                    "Inside the loop, we check if the condition is met."
                 ],
                 "animations": [
                     "Define Visual Layout: Split-Left Layout for code demonstration.",
-                    "Code: def algorithm():\\n    pass",
-                    "Action: Highlight code line.",
+                    "Code: def algorithm():\\n    for x in data:\\n        if x > 0: pass",
+                    "Action: Highlight code line 1 (def algorithm) while narrating first line.",
+                    "Action: Highlight code line 2 (for loop) while narrating second line.",
+                    "Action: Highlight code line 3 (if condition) while narrating third line.",
                     "Visual: Create data structure visualization."
                 ]
             }
         ]
     }
-    ```
+    ```"""
+
+    non_cs_json_example = """
+    **✅ Correct JSON format example:**
+    ```json
+    {
+        "sections": [
+            {
+                "id": "section_0_intro",
+                "title": "Scene Introduction",
+                "estimated_duration": 45,
+                "lecture_lines": [
+                    "First narration line",
+                    "Second narration line"
+                ],
+                "animations": [
+                    "Define Visual Layout: Left-Right Split.",
+                    "Visual: FadeIn title at top.",
+                    "Visual: Create scene illustration with labeled diagram."
+                ]
+            },
+            {
+                "id": "section_1",
+                "title": "Core Concept Explanation",
+                "estimated_duration": 60,
+                "lecture_lines": [
+                    "Explanation step 1",
+                    "Explanation step 2",
+                    "Explanation step 3"
+                ],
+                "animations": [
+                    "Define Visual Layout: Left-Right Split for lecture and visuals.",
+                    "Visual: Create labeled diagram showing key structure.",
+                    "Visual: Highlight key formula with MathTex.",
+                    "Visual: Show process flow with arrows and labels."
+                ]
+            }
+        ]
+    }
+    ```"""
+
+    json_example = cs_json_example if code_layout_required else non_cs_json_example
+
+    base_prompt += """
+
+    ## ⚠️⚠️⚠️ JSON Output Format Requirements (MUST STRICTLY FOLLOW) ⚠️⚠️⚠️
+
+    **🚨 Key Rules:**
+    1. **Output pure JSON only**, do not add any explanatory text, markdown markers, or comments
+    2. **Escape quotes in strings**: If string content contains double quotes `"`, must write as `\\"`
+    3. **Escape newlines in strings**: Use `\\n` instead of actual newlines
+    4. **No comma after last array element**
+    5. **All strings must use double quotes**, not single quotes
+    6. **Ensure JSON can be correctly parsed by Python's json.loads()**
+    7. **Please output JSON directly, do not wrap with ```json ```**
+    8. **Note: In JSON string content, strictly forbidden to have unescaped double quotes ("), if quoting is needed, use single quotes (') instead.**
+
+    """
+    base_prompt += json_example
+    base_prompt += """
 
     **❌ Common Errors (will cause parsing failure):**
     ```
@@ -180,46 +261,46 @@ def get_prompt2_storyboard(
 
 def get_prompt_download_assets(storyboard_data):
     return f"""
-分析这份教育视频分镜脚本，识别出最多 4 个**必须**使用下载图标/图片（而非手动绘制形状）来表示的关键视觉元素。
+Analyze this educational video storyboard script and identify up to 4 key visual elements that MUST be represented using downloaded icons/images (instead of manually drawn shapes).
 
-内容 (Content):
+Content:
 {storyboard_data}
 
-选择标准 (Selection Criteria):
-1. 仅选择出现在**介绍 (Introduction)** 或 **应用 (Application)** 章节中的元素，且必须满足：
-   - 现实世界中可识别的物理对象
-   - 视觉特征鲜明，仅用通用几何形状不足以表达
-   - 具体的实物，而非抽象概念
-2. 优先选择：具体的动物、角色、交通工具、工具、设备、地标、日常物品。
-3. **忽略且绝不包含**：
-   - 抽象概念（如：正义、交流）
-   - 思想的符号或图标（如：字母、公式、图表、数据结构树）
-   - 几何形状、箭头或数学相关的视觉元素
-   - 任何完全由基本形状组成且无独特视觉身份的物体
+Selection Criteria:
+1. Only select elements that appear in the **Introduction** or **Application** sections, and they must satisfy:
+   - Recognizable real-world physical objects
+   - Distinct visual characteristics that cannot be conveyed using basic geometric shapes alone
+   - Concrete tangible items, not abstract concepts
+2. Prefer selecting: specific animals, characters, vehicles, tools, devices, landmarks, or everyday objects.
+3. **Ignore and never include**:
+   - Abstract concepts (e.g., justice, communication)
+   - Symbolic or conceptual icons (e.g., letters, formulas, graphs, data structure trees)
+   - Geometric shapes, arrows, or math-related visual elements
+   - Any object composed entirely of basic shapes without a unique visual identity
 
-输出格式 (Output format):
-- **仅输出英文关键词**（为了适配搜索引擎），每个关键词占一行，全小写，无编号，无额外文本。
+Output format:
+- **Output only English keywords** (for search compatibility), one keyword per line, all lowercase, no numbering, no extra text.
 """
 
 
 def get_prompt_place_assets(asset_mapping, animations_structure):
     return f"""
-你需要通过插入已下载的素材来增强动画描述。
+You need to enhance the animation descriptions by inserting downloaded assets.
 
-可用素材列表 (Asset list):
+Asset list:
 {asset_mapping}
 
-当前动画数据 (Current Animations Data):
+Current Animations Data:
 {animations_structure}
 
-指令 (Instructions):
-- 对于每一个动画步骤，判断是否应该融入已下载的素材。
-- 仅为需要的动画步骤选择最相关的一个素材。
-- 以此格式插入素材的**抽象路径**：[Asset: XXX]。
-- **仅限**在**第一个和最后一个**章节中使用素材。
-- 保持结构不变：返回一个包含 section_index, section_id 和 enhanced animations 的 JSON 数组。
-- 仅修改动画描述以包含素材引用。
-- 不要修改 section_index 或 section_id。
+Instructions:
+- For each animation step, decide whether a downloaded asset should be integrated.
+- Choose only the single most relevant asset for animation steps that need it.
+- Insert the asset using this abstract path format: [Asset: XXX].
+- Only use assets in the **Introduction** or **Application** sections.
+- Keep the structure unchanged: return a JSON array containing section_index, section_id, and enhanced animations.
+- Only modify animation descriptions to include asset references.
+- Do not modify section_index or section_id.
 
-仅返回增强后的动画数据，必须是有效的 JSON 数组格式：
+Return only the enhanced animation data, and it must be a valid JSON array.
 """
