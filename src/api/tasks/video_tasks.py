@@ -491,11 +491,11 @@ def generate_video_task(
             subject=subject,
             render_quality=render_quality,
             max_code_token_length=50000,  # 提高 token 上限，避免分镜脚本被截断
-            max_fix_bug_tries=10,
-            max_regenerate_tries=10,
-            max_feedback_gen_code_tries=5,
-            max_mllm_fix_bugs_tries=5,
-            feedback_rounds=2,
+            max_fix_bug_tries=3,
+            max_regenerate_tries=3,
+            max_feedback_gen_code_tries=1,
+            max_mllm_fix_bugs_tries=1,
+            feedback_rounds=1,
         )
         
         # 创建输出目录
@@ -541,15 +541,15 @@ def generate_video_task(
             raise
         
         # ========== 阶段 5: 注入封面 + 概述 ==========
-        task_id = callback.on_stage_start("inject_cover_overview", "正在注入封面与课程导览。")
-        try:            
-            check_task_timeout()  # 模宗            
-            agent.inject_overview_section()
-            agent.inject_cover_section()
-            callback.on_stage_finish(task_id, "封面与课程导览注入成功。")
-        except Exception as e:
-            callback.on_stage_failed(task_id, f"封面与课程导览注入失败: {str(e)}")
-            raise
+        # task_id = callback.on_stage_start("inject_cover_overview", "正在注入封面与课程导览。")
+        # try:
+        #     check_task_timeout()  # 模宗
+        #     agent.inject_overview_section()
+        #     agent.inject_cover_section()
+        #     callback.on_stage_finish(task_id, "封面与课程导览注入成功。")
+        # except Exception as e:
+        #     callback.on_stage_failed(task_id, f"封面与课程导览注入失败: {str(e)}")
+        #     raise
         
         # ========== 阶段 6: 生成代码 ==========
         task_id = callback.on_stage_start("generate_codes", "正在生成 Manim 代码。")

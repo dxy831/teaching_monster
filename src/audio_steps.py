@@ -9,6 +9,7 @@ import time
 import wave
 from pathlib import Path
 from typing import Callable, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from pydub import AudioSegment
@@ -328,21 +329,48 @@ def build_section_steps(
     section_steps = []
     highlight_groups = getattr(section, "highlight_groups", None) or [[index] for index in range(len(section.lecture_lines))]
 
+    # 批量扩展短句以减少 API 调用
+    batch_expansions = []
     for index, highlight_indices in enumerate(highlight_groups):
         screen_texts = [section.lecture_lines[line_index] for line_index in highlight_indices]
         combined_screen_text = " ".join(screen_texts)
-        spoken_script = expand_screen_text_to_spoken_script(
-            screen_text=combined_screen_text,
-            api_func=api_func,
-            max_retries=expansion_max_retries,
-        )
-        audio_path = synthesize_tts_audio(
-            text=spoken_script,
-            output_path=audio_dir / f"step_{index:02d}.wav",
-            max_retries=tts_max_retries,
-        )
-        audio_duration = measure_audio_duration(audio_path)
+        batch_expansions.append((index, highlight_indices, screen_texts, combined_screen_text))
 
+    # 并行调用 LLM 扩展
+    spoken_scripts = [None] * len(batch_expansions)
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        future_to_index = {
+            executor.submit(
+                expand_screen_text_to_spoken_script,
+                combined_screen_text,
+                api_func,
+                expansion_max_retries
+            ): index
+            for index, (_, _, _, combined_screen_text) in enumerate(batch_expansions)
+        }
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            spoken_scripts[index] = future.result()
+
+    # 并行生成 TTS 音频
+    audio_results = [None] * len(batch_expansions)
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        future_to_index = {
+            executor.submit(
+                synthesize_tts_audio,
+                spoken_script,
+                audio_dir / f"step_{index:02d}.wav",
+                tts_max_retries
+            ): index
+            for index, spoken_script in enumerate(spoken_scripts)
+        }
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            audio_results[index] = future.result()
+
+    # 构建 section_steps
+    for (index, highlight_indices, screen_texts, _), spoken_script, audio_path in zip(batch_expansions, spoken_scripts, audio_results):
+        audio_duration = measure_audio_duration(audio_path)
         section_steps.append(
             {
                 "screen_text": screen_texts[0] if len(screen_texts) == 1 else "\n".join(screen_texts),

@@ -91,16 +91,16 @@ class VideoFeedback:
 
 @dataclass
 class RunConfig:
-    use_feedback: bool = True
-    use_assets: bool = True
+    use_feedback: bool = False
+    use_assets: bool = False
     api: Callable = None
-    feedback_rounds: int = 2
+    feedback_rounds: int = 1
     iconfinder_api_key: str = ""
-    max_code_token_length: int = 10000
-    max_fix_bug_tries: int = 10
-    max_regenerate_tries: int = 10
-    max_feedback_gen_code_tries: int = 3
-    max_mllm_fix_bugs_tries: int = 3
+    max_code_token_length: int = 16000
+    max_fix_bug_tries: int = 3
+    max_regenerate_tries: int = 3
+    max_feedback_gen_code_tries: int = 1
+    max_mllm_fix_bugs_tries: int = 1
     duration: int = 5
     # 用户个性化配置
     user_profile: Optional[UserProfile] = None
@@ -1332,7 +1332,7 @@ Do not include quotes or extra explanation.
                 return section.id, e
 
         failed_sections = {}
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=12) as executor:
             futures = {executor.submit(task, section): section for section in self.sections}
             for future in as_completed(futures):
                 section_id, err = future.result()
@@ -1420,7 +1420,7 @@ Do not include quotes or extra explanation.
             print(f"❌ {self.learning_topic} {section_id} 渲染过程异常: {str(e)}")
             return section_id, False, None
 
-    def render_all_sections(self, max_workers: int = 6) -> Dict[str, str]:
+    def render_all_sections(self, max_workers: int = 12) -> Dict[str, str]:
         print(f"🎥 开始并行渲染所有分节视频 (最多 {max_workers} 个进程)...")
 
         tasks = []
