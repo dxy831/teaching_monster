@@ -15,6 +15,7 @@ dependencies = [
     # ============================================================================
     "openai>=1.90.0",
     "requests>=2.32.4",
+    "oss2>=2.19.1",
     "numpy>=2.2.6",
     "scipy>=1.15.3",
     "psutil>=7.0.0",
@@ -141,6 +142,7 @@ dev = [
 ]
 
 [project.scripts]
+code2video = "src.agent:main"
 code2video-api = "src.api.main:main"
 
 [build-system]

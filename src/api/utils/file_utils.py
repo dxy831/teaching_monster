@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..config import settings
 
@@ -143,6 +143,15 @@ def get_metadata(file_hash: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def update_metadata(file_hash: str, updates: Dict[str, Any]) -> str:
+    metadata = get_metadata(file_hash) or {}
+    metadata.update(updates)
+    metadata_path = os.path.join(settings.metadata_dir, f"{file_hash}.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return metadata_path
+
+
 def get_file_size(file_path: str) -> int:
     """
     获取文件大小（字节）
@@ -239,11 +248,56 @@ def get_video_resolution(file_path: str) -> Optional[tuple]:
     return None
 
 
+def get_audio_sample_rate(file_path: str) -> Optional[int]:
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=sample_rate",
+                "-of", "default=nw=1:nk=1",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            output = (result.stdout or "").strip()
+            if output:
+                return int(output)
+    except Exception:
+        pass
+
+    return None
+
+
+def get_public_file_expiry(filename: str, hours: int = 48) -> Optional[datetime]:
+    metadata = get_metadata(filename)
+    if not metadata:
+        return None
+
+    saved_at = metadata.get("saved_at")
+    if not saved_at:
+        return None
+
+    try:
+        return datetime.fromisoformat(saved_at) + timedelta(hours=hours)
+    except ValueError:
+        return None
+
+
 def validate_video_output(
     file_path: str,
     max_duration: int = 1800,
     min_width: int = 1280,
     min_height: int = 720,
+    min_audio_sample_rate: int = 16000,
     max_size_gb: float = 3.0
 ) -> Dict[str, Any]:
     """
@@ -262,6 +316,7 @@ def validate_video_output(
             "errors": [list of error messages],
             "duration_seconds": float or None,
             "resolution": (width, height) or None,
+            "audio_sample_rate": int or None,
             "file_size_bytes": int,
             "file_size_gb": float,
         }
@@ -271,6 +326,7 @@ def validate_video_output(
         "errors": [],
         "duration_seconds": None,
         "resolution": None,
+        "audio_sample_rate": None,
         "file_size_bytes": 0,
         "file_size_gb": 0.0,
     }
@@ -318,5 +374,17 @@ def validate_video_output(
     else:
         result["valid"] = False
         result["errors"].append("无法获取视频分辨率")
-    
+
+    audio_sample_rate = get_audio_sample_rate(file_path)
+    if audio_sample_rate is not None:
+        result["audio_sample_rate"] = audio_sample_rate
+        if audio_sample_rate < min_audio_sample_rate:
+            result["valid"] = False
+            result["errors"].append(
+                f"音频采样率过低: {audio_sample_rate}Hz (最低要求 {min_audio_sample_rate}Hz)"
+            )
+    else:
+        result["valid"] = False
+        result["errors"].append("无法获取音频采样率")
+
     return result

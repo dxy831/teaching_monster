@@ -33,6 +33,15 @@ class Settings:
     output_dir: str = "data/outputs"
     video_dir: str = "data/outputs/videos"
     metadata_dir: str = "data/outputs/metadata"
+
+    # OSS 配置
+    oss_enabled: bool = False
+    oss_endpoint: str = ""
+    oss_bucket_name: str = ""
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    oss_key_prefix: str = "competition-outputs"
+    oss_url_expire_seconds: int = 172800
     
     # LLM API 配置
     default_api: str = "claude"
@@ -69,6 +78,15 @@ class Settings:
         self.output_dir = os.getenv("OUTPUT_DIR", self.output_dir)
         self.video_dir = os.getenv("VIDEO_DIR", os.path.join(self.output_dir, "videos"))
         self.metadata_dir = os.getenv("METADATA_DIR", os.path.join(self.output_dir, "metadata"))
+
+        # OSS
+        self.oss_enabled = os.getenv("OSS_ENABLED", "false").lower() in ("true", "1", "yes")
+        self.oss_endpoint = os.getenv("OSS_ENDPOINT", self.oss_endpoint)
+        self.oss_bucket_name = os.getenv("OSS_BUCKET_NAME", self.oss_bucket_name)
+        self.oss_access_key_id = os.getenv("OSS_ACCESS_KEY_ID", self.oss_access_key_id)
+        self.oss_access_key_secret = os.getenv("OSS_ACCESS_KEY_SECRET", self.oss_access_key_secret)
+        self.oss_key_prefix = os.getenv("OSS_KEY_PREFIX", self.oss_key_prefix).strip("/")
+        self.oss_url_expire_seconds = int(os.getenv("OSS_URL_EXPIRE_SECONDS", str(self.oss_url_expire_seconds)))
         
         # LLM API
         self.default_api = os.getenv("DEFAULT_API", self.default_api)

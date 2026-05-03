@@ -233,12 +233,16 @@ async def generate_competition_video(
     if subtitle_file and get_video_path(subtitle_file):
         subtitle_url = _build_public_file_url(raw_request, subtitle_file)
 
-    return CompetitionGenerateResponse(
+    response = CompetitionGenerateResponse(
         request_id=request.request_id,
         video_url=_build_public_file_url(raw_request, video_file),
         subtitle_url=subtitle_url,
         supplementary_url=[],
     )
+    expires_at = (result.get("metadata") or {}).get("public_link_expires_at")
+    if expires_at:
+        raw_request.state.public_link_expires_at = expires_at
+    return response
 
 
 @router.get("/tasks/{task_id}")

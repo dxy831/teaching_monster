@@ -28,15 +28,12 @@ import time
 import random
 import subprocess
 import shutil
-import pathlib
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
-
 from src.gpt_request import *
 from prompts import *
-from prompts.user_profile import UserProfile, get_default_profile, create_profile_from_text, parse_profile_with_ai_sync
 from src.utils import *
 from src.scope_refine import *
 from src.external_assets import process_storyboard_with_assets
@@ -557,7 +554,7 @@ Example:
 
 Constraints:
 - Must be an integer
-- Must be between 2 and 5 inclusive
+- Must be between 3 and 7 inclusive
 
 Return only one integer number.
 """
@@ -565,10 +562,10 @@ Return only one integer number.
         raw_text = self._extract_response_text(response)
         match = re.search(r"\d+", raw_text)
         if not match:
-            return 3
+            return 4
         value = int(match.group(0))
-        if value < 2 or value > 5:
-            return 3
+        if value < 3 or value > 7:
+            return 4
         return value
 
     def _ensure_ai_duration_selected(self) -> None:
@@ -577,9 +574,9 @@ Return only one integer number.
         try:
             selected = self._select_duration_with_ai()
         except Exception:
-            selected = 3
-        if selected < 2 or selected > 5:
-            selected = 3
+            selected = 4
+        if selected < 3 or selected > 7:
+            selected = 4
         self.duration = selected
         self._ai_duration_selected = True
         print(f"⏱️ AI 选择视频时长: {self.duration} 分钟")
@@ -2102,143 +2099,211 @@ def get_api_and_output(API_name):
         raise ValueError("无效的 API 模型名称")
 
 
-def build_and_parse_args():
+def build_and_parse_args(argv=None):
     parser = argparse.ArgumentParser()
-    # TODO: Core hyperparameters
-    parser.add_argument(
-        "--API",
-        type=str,
-        choices=["gpt-41", "claude", "gpt-5", "gpt-4o", "gpt-o4mini", "Gemini"],
-        default="gpt-4o",
-    )
-    parser.add_argument(
-        "--folder_prefix",
-        type=str,
-        default="TEST",
-    )
-    parser.add_argument("--knowledge_file", type=str, default="long_video_topics_list.json")
+    parser.add_argument("--competition", action="store_true", default=False)
+    parser.add_argument("--json", action="store_true", default=False)
+    parser.add_argument("--api-model", dest="api_model", type=str, default="claude")
+    parser.add_argument("--knowledge-point", dest="knowledge_point", type=str, default=None)
+    parser.add_argument("--age", type=int, default=None)
+    parser.add_argument("--gender", type=str, default=None)
+    parser.add_argument("--language", type=str, default=None)
+    parser.add_argument("--duration", type=int, default=5)
+    parser.add_argument("--difficulty", choices=["simple", "medium", "hard"], default="medium")
+    parser.add_argument("--extra-info", dest="extra_info", type=str, default="")
+    parser.add_argument("--use-feedback", action="store_true", dest="use_feedback", default=True)
+    parser.add_argument("--no-feedback", action="store_false", dest="use_feedback")
+    parser.add_argument("--use-assets", action="store_true", dest="use_assets", default=True)
+    parser.add_argument("--no-assets", action="store_false", dest="use_assets")
+    parser.add_argument("--request-id", dest="request_id", type=str, default=None)
+    parser.add_argument("--course-requirement", dest="course_requirement", type=str, default="")
+    parser.add_argument("--student-persona", dest="student_persona", type=str, default="")
+    parser.add_argument("--output-dir", dest="output_dir", type=str, default=None)
+    parser.add_argument("--render-quality", dest="render_quality", type=str, default=None)
+
+    parser.add_argument("--API", type=str, choices=["gpt-41", "claude", "gpt-5", "gpt-4o", "gpt-o4mini", "Gemini"], default=None)
+    parser.add_argument("--knowledge_point", type=str, default=None)
+    parser.add_argument("--user_profile", type=str, default="")
+    parser.add_argument("--knowledge_file", type=str, default=None)
+    parser.add_argument("--folder_prefix", type=str, default="TEST")
     parser.add_argument("--iconfinder_api_key", type=str, default="")
-
-    # Basically invariant parameters
-    parser.add_argument("--use_feedback", action="store_true", default=False)
-    parser.add_argument("--no_feedback", action="store_false", dest="use_feedback")
-    parser.add_argument("--use_assets", action="store_true", default=False)
-    parser.add_argument("--no_assets", action="store_false", dest="use_assets")
-
-    parser.add_argument("--max_code_token_length", type=int, help="max # token for generating code", default=10000)
-    parser.add_argument("--max_fix_bug_tries", type=int, help="max # tries for SR to fix bug", default=10)
-    parser.add_argument("--max_regenerate_tries", type=int, help="max # tries to regenerate", default=10)
-    parser.add_argument("--max_feedback_gen_code_tries", type=int, help="max # tries for Critic", default=3)
-    parser.add_argument("--max_mllm_fix_bugs_tries", type=int, help="max # tries for Critic to fix bug", default=3)
+    parser.add_argument("--max_code_token_length", type=int, default=10000)
+    parser.add_argument("--max_fix_bug_tries", type=int, default=10)
+    parser.add_argument("--max_regenerate_tries", type=int, default=10)
+    parser.add_argument("--max_feedback_gen_code_tries", type=int, default=3)
+    parser.add_argument("--max_mllm_fix_bugs_tries", type=int, default=3)
     parser.add_argument("--feedback_rounds", type=int, default=2)
-    parser.add_argument("--duration", type=int, default=5, help="Estimated video duration in minutes")
-    parser.add_argument("--max_video_seconds", type=int, default=600, help="Max final video duration in seconds")
-    parser.add_argument("--pipeline_budget_seconds", type=int, default=1800, help="Total wall-clock budget for the full pipeline in seconds")
-    parser.add_argument("--render_timeout_seconds", type=int, default=600, help="Per-section render timeout in seconds")
-
+    parser.add_argument("--max_video_seconds", type=int, default=600)
+    parser.add_argument("--pipeline_budget_seconds", type=int, default=1800)
+    parser.add_argument("--render_timeout_seconds", type=int, default=600)
     parser.add_argument("--parallel", action="store_true", default=False)
     parser.add_argument("--no_parallel", action="store_false", dest="parallel")
     parser.add_argument("--parallel_group_num", type=int, default=3)
-    parser.add_argument("--max_concepts", type=int, help="Limit # concepts for a quick run, -1 for all", default=-1)
-    parser.add_argument("--knowledge_point", type=str, help="if knowledge_file not given, can ignore", default=None)
-    
-    # 新增参数：最大并行工作进程数
-    parser.add_argument("--max_workers", type=int, default=None, help="Force specific number of workers, overriding auto-detection")
+    parser.add_argument("--max_concepts", type=int, default=-1)
+    parser.add_argument("--max_workers", type=int, default=None)
+    return parser.parse_args(argv)
 
-    # 用户个性化配置参数 - 新的自然语言描述方式
-    parser.add_argument(
-        "--user_profile",
-        type=str,
-        default="",
-        help="用户画像的自然语言描述，例如：'我是17岁的高中生，想要的学习难度是入门级，选择的编程语言是Python，目标是利用暑假成功入门Python'"
+
+def _normalize_cli_args(args):
+    if args.API:
+        args.api_model = args.API
+    args.legacy_knowledge_point = args.knowledge_point
+    if args.user_profile and not args.extra_info:
+        args.extra_info = args.user_profile
+    return args
+
+
+def _load_competition_request_from_stdin() -> Dict[str, Any]:
+    raw = sys.stdin.read().strip()
+    if not raw:
+        raise ValueError("competition 模式需要通过 stdin 提供 JSON，或传入 --request-id --course-requirement --student-persona")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"competition 模式 stdin JSON 解析失败: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("competition 模式 stdin 输入必须是 JSON object")
+    return payload
+
+
+def _get_cli_competition_request(args) -> Dict[str, Any]:
+    if args.request_id or args.course_requirement or args.student_persona:
+        request_data = {
+            "request_id": args.request_id,
+            "course_requirement": args.course_requirement,
+            "student_persona": args.student_persona,
+        }
+    else:
+        request_data = _load_competition_request_from_stdin()
+
+    request_id = request_data.get("request_id")
+    course_requirement = request_data.get("course_requirement")
+    student_persona = request_data.get("student_persona")
+    if not request_id or not course_requirement or not student_persona:
+        raise ValueError("competition 模式需要 request_id、course_requirement、student_persona")
+
+    return {
+        "request_id": request_id,
+        "course_requirement": course_requirement,
+        "student_persona": student_persona,
+        "competition_mode": True,
+        "duration": args.duration,
+        "api_model": args.api_model,
+        "output_dir": args.output_dir,
+        "render_quality": args.render_quality,
+    }
+
+
+def _build_cli_request(args):
+    if args.competition:
+        return _get_cli_competition_request(args)
+
+    knowledge_point = args.knowledge_point or args.legacy_knowledge_point
+    if not knowledge_point:
+        raise ValueError("standard 模式需要 --knowledge-point")
+    return {
+        "knowledge_point": knowledge_point,
+        "age": args.age,
+        "gender": args.gender,
+        "language": args.language,
+        "duration": args.duration,
+        "difficulty": args.difficulty,
+        "extra_info": args.extra_info,
+        "use_feedback": args.use_feedback,
+        "use_assets": args.use_assets,
+        "api_model": args.api_model,
+        "output_dir": args.output_dir,
+        "render_quality": args.render_quality,
+    }
+
+
+def _upload_competition_artifacts(request_id: str, video_file: str, subtitle_file: Optional[str], expires_at: str):
+    from src.api.config import settings
+    from src.api.utils.file_utils import get_video_path, update_metadata
+    from src.api.utils.oss_utils import (
+        build_oss_object_key,
+        generate_oss_signed_url,
+        upload_file_to_oss,
     )
 
-    return parser.parse_args()
+    video_path = get_video_path(video_file)
+    if not video_path:
+        raise ValueError("competition 模式生成完成但视频文件不可下载")
+
+    video_object_key = build_oss_object_key(request_id, video_file)
+    upload_file_to_oss(video_path, video_object_key, content_type="video/mp4")
+    video_url = generate_oss_signed_url(video_object_key, settings.oss_url_expire_seconds)
+
+    subtitle_url = None
+    subtitle_object_key = None
+    if subtitle_file:
+        subtitle_path = get_video_path(subtitle_file)
+        if subtitle_path:
+            subtitle_object_key = build_oss_object_key(request_id, subtitle_file)
+            upload_file_to_oss(subtitle_path, subtitle_object_key, content_type="application/x-subrip")
+            subtitle_url = generate_oss_signed_url(subtitle_object_key, settings.oss_url_expire_seconds)
+
+    update_metadata(
+        Path(video_file).stem,
+        {
+            "oss_bucket_name": settings.oss_bucket_name,
+            "oss_endpoint": settings.oss_endpoint,
+            "oss_object_key": video_object_key,
+            "oss_subtitle_object_key": subtitle_object_key,
+            "oss_signed_url_expires_at": expires_at,
+        },
+    )
+    return video_url, subtitle_url
+
+
+def main(argv=None):
+    from src.api.execution import ExecutionContext, execute_video_generation
+    from src.api.utils.file_utils import get_video_path
+
+    args = _normalize_cli_args(build_and_parse_args(argv))
+    request_data = _build_cli_request(args)
+    result = execute_video_generation(ExecutionContext(request_data=request_data))
+
+    if args.competition:
+        video_file = result.get("video_file")
+        if not video_file or not get_video_path(video_file):
+            raise ValueError("competition 模式生成完成但视频文件不可下载")
+
+        metadata = result.get("metadata") or {}
+        expires_at = metadata.get("public_link_expires_at")
+        if not expires_at:
+            raise ValueError("competition 模式生成完成但未写入 48 小时公开下载有效期")
+
+        subtitle_file = result.get("subtitle_file")
+        video_url, subtitle_url = _upload_competition_artifacts(
+            request_data["request_id"],
+            video_file,
+            subtitle_file,
+            expires_at,
+        )
+
+        output = {
+            "request_id": request_data["request_id"],
+            "video_url": video_url,
+            "subtitle_url": subtitle_url,
+            "supplementary_url": [],
+        }
+    else:
+        metadata = result.get("metadata") or {}
+        output = {
+            "message": "视频生成成功。" if result.get("success") else result.get("error") or "视频生成失败。",
+            "data": {
+                "video_file": result.get("video_file"),
+                "outline": metadata.get("outline"),
+                "duration_seconds": (metadata.get("video_specs") or {}).get("duration_seconds"),
+                "token_usage": result.get("token_usage"),
+                "subtitle_file": result.get("subtitle_file"),
+            },
+        }
+
+    print(json.dumps(output, ensure_ascii=False, indent=2 if args.json else None))
+    return 0 if result.get("success") else 1
 
 
 if __name__ == "__main__":
-    args = build_and_parse_args()
-
-    api, folder_name = get_api_and_output(args.API)
-    folder = Path(__file__).resolve().parent / "CASES" / f"{args.folder_prefix}_{folder_name}"
-
-    _CFG_PATH = pathlib.Path(__file__).with_name("api_config.json")
-    with _CFG_PATH.open("r", encoding="utf-8") as _f:
-        _CFG = json.load(_f)
-    iconfinder_cfg = _CFG.get("iconfinder", {})
-    args.iconfinder_api_key = iconfinder_cfg.get("api_key")
-    if args.iconfinder_api_key:
-        print(f"Iconfinder API 密钥: {args.iconfinder_api_key}")
-    else:
-        print("警告: 配置文件中未找到 Iconfinder API 密钥。使用默认值 (None)。")
-
-    if args.knowledge_point:
-        print(f"🔄 单知识点模式: {args.knowledge_point}")
-        knowledge_points = [args.knowledge_point]
-        args.parallel_group_num = 1
-    elif args.knowledge_file:
-        with open(Path(__file__).resolve().parent / "json_files" / args.knowledge_file, "r", encoding="utf-8") as f:
-            knowledge_points = json.load(f)
-            if args.max_concepts is not None:
-                knowledge_points = knowledge_points[: args.max_concepts]
-    else:
-        raise ValueError("必须提供 --knowledge_point 或 --knowledge_file")
-
-    # 创建用户个性化配置
-    if args.user_profile:
-        print(f"🧠 正在使用 AI 解析用户画像...")
-        print(f"📝 用户输入: {args.user_profile}")
-        
-        # 先创建基础的用户配置
-        user_profile = create_profile_from_text(args.user_profile)
-        
-        # 使用 AI 解析用户画像
-        parsed_profile = parse_profile_with_ai_sync(args.user_profile, api)
-        
-        if parsed_profile:
-            user_profile.update_with_parsed_profile(parsed_profile)
-            print(f"✅ AI 解析成功！")
-            
-            # 打印解析结果摘要
-            summary = parsed_profile.get("user_summary", {})
-            print(f"📋 解析结果:")
-            print(f"   - 年龄段: {summary.get('age_group', '未知')}")
-            print(f"   - 知识背景: {summary.get('background', '未知')}")
-            print(f"   - 学习目标: {summary.get('learning_goal', '未知')}")
-            print(f"   - 编程语言: {summary.get('target_language', 'Python')}")
-            print(f"   - 难度偏好: {summary.get('difficulty_preference', '中等')}")
-        else:
-            print(f"⚠️ AI 解析失败，使用默认解析结果")
-    else:
-        print(f"📋 未提供用户画像，使用默认配置")
-        user_profile = get_default_profile()
-
-    cfg = RunConfig(
-        api=api,
-        iconfinder_api_key=args.iconfinder_api_key,
-        use_feedback=args.use_feedback,
-        use_assets=args.use_assets,
-        max_code_token_length=args.max_code_token_length,
-        max_fix_bug_tries=args.max_fix_bug_tries,
-        max_regenerate_tries=args.max_regenerate_tries,
-        max_feedback_gen_code_tries=args.max_feedback_gen_code_tries,
-        max_mllm_fix_bugs_tries=args.max_mllm_fix_bugs_tries,
-        feedback_rounds=args.feedback_rounds,
-        duration=args.duration,
-        max_video_seconds=args.max_video_seconds,
-        pipeline_budget_seconds=args.pipeline_budget_seconds,
-        render_timeout_seconds=args.render_timeout_seconds,
-        user_profile=user_profile,
-    )
-    
-    # 优先使用命令行参数指定的 workers，否则自动计算
-    real_workers = args.max_workers if args.max_workers is not None else get_optimal_workers()
-
-    run_Code2Video(
-        knowledge_points,
-        folder,
-        parallel=args.parallel,
-        batch_size=max(1, int(len(knowledge_points) / args.parallel_group_num)),
-        max_workers=real_workers,
-        cfg=cfg,
-    )
+    raise SystemExit(main())

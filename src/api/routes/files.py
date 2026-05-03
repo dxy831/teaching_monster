@@ -2,13 +2,14 @@
 文件下载路由
 """
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..auth import verify_api_key
-from ..utils.file_utils import get_video_path, get_metadata, get_file_size
+from ..utils.file_utils import get_video_path, get_metadata, get_file_size, get_public_file_expiry
 
 router = APIRouter(prefix="/api/v1", tags=["文件下载"])
 
@@ -29,21 +30,25 @@ def _get_media_type(filename: str) -> str:
     return "application/octet-stream"
 
 
-async def _build_file_response(file_path: str, filename: str, range_header: Optional[str]):
+async def _build_file_response(file_path: str, filename: str, range_header: Optional[str], expiry_at: Optional[datetime] = None):
     file_size = get_file_size(file_path)
     media_type = _get_media_type(filename)
 
     if range_header:
-        return await _handle_range_request(file_path, file_size, range_header, media_type)
+        return await _handle_range_request(file_path, file_size, range_header, media_type, expiry_at)
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(file_size),
+    }
+    if expiry_at is not None:
+        headers["X-Link-Expires-At"] = expiry_at.isoformat()
 
     return FileResponse(
         path=file_path,
         media_type=media_type,
         filename=filename,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_size),
-        }
+        headers=headers,
     )
 
 
@@ -96,14 +101,27 @@ async def public_download_file(
             detail=f"文件不存在: {filename}"
         )
 
-    return await _build_file_response(file_path, filename, range)
+    expiry_at = get_public_file_expiry(filename)
+    if expiry_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"文件缺少有效期元信息: {filename}"
+        )
+    if datetime.now() > expiry_at:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"文件公开下载链接已过期: {filename}"
+        )
+
+    return await _build_file_response(file_path, filename, range, expiry_at)
 
 
 async def _handle_range_request(
     file_path: str,
     file_size: int,
     range_header: str,
-    media_type: str
+    media_type: str,
+    expiry_at: Optional[datetime] = None
 ) -> StreamingResponse:
     """
     处理 Range 请求（断点续传）
@@ -160,15 +178,19 @@ async def _handle_range_request(
                 remaining -= len(data)
                 yield data
     
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Content-Length": str(content_length),
+    }
+    if expiry_at is not None:
+        headers["X-Link-Expires-At"] = expiry_at.isoformat()
+
     return StreamingResponse(
         file_stream(),
         status_code=status.HTTP_206_PARTIAL_CONTENT,
         media_type=media_type,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Range": f"bytes {start}-{end}/{file_size}",
-            "Content-Length": str(content_length),
-        }
+        headers=headers,
     )
 
 
@@ -218,6 +240,18 @@ async def public_head_file(filename: str):
             detail=f"文件不存在: {filename}"
         )
 
+    expiry_at = get_public_file_expiry(filename)
+    if expiry_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"文件缺少有效期元信息: {filename}"
+        )
+    if datetime.now() > expiry_at:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"文件公开下载链接已过期: {filename}"
+        )
+
     file_size = get_file_size(file_path)
     media_type = _get_media_type(filename)
 
@@ -227,6 +261,7 @@ async def public_head_file(filename: str):
         headers={
             "Accept-Ranges": "bytes",
             "Content-Length": str(file_size),
+            "X-Link-Expires-At": expiry_at.isoformat(),
         }
     )
 

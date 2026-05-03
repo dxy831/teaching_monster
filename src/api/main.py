@@ -122,10 +122,9 @@ app.include_router(video_router)
 app.include_router(files_router)
 
 
-# 直接运行入口
-if __name__ == "__main__":
+def main():
     import uvicorn
-    
+
     uvicorn.run(
         "api.main:app",
         host=settings.api_host,
@@ -133,3 +132,7 @@ if __name__ == "__main__":
         reload=settings.debug,
         log_level="info",
     )
+
+
+if __name__ == "__main__":
+    main()
