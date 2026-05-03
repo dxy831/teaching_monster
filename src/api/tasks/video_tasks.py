@@ -308,13 +308,15 @@ def _build_profile_text(
     return "，".join(profile_parts)
 
 
-def _collect_subtitles(agent) -> list[dict]:
+def _collect_subtitles(agent, merged_section_ids: Optional[set[str]] = None) -> list[dict]:
     from src.audio_steps import build_section_subtitles
 
     subtitles = []
     current_offset = 0.0
     ordered_sections = agent.sections or []
     for section in ordered_sections:
+        if merged_section_ids is not None and section.id not in merged_section_ids:
+            continue
         section_steps = agent.section_steps.get(section.id)
         if not section_steps:
             continue
@@ -486,6 +488,9 @@ def generate_video_task(
             use_feedback=use_feedback,
             use_assets=use_assets,
             duration=duration,
+            max_video_seconds=660,
+            pipeline_budget_seconds=1800,
+            render_timeout_seconds=600,
             user_profile=user_profile,
             forced_difficulty_level=forced_difficulty_level,
             subject=subject,
@@ -493,9 +498,9 @@ def generate_video_task(
             max_code_token_length=50000,  # 提高 token 上限，避免分镜脚本被截断
             max_fix_bug_tries=3,
             max_regenerate_tries=3,
-            max_feedback_gen_code_tries=1,
-            max_mllm_fix_bugs_tries=1,
-            feedback_rounds=1,
+            max_feedback_gen_code_tries=2,
+            max_mllm_fix_bugs_tries=2,
+            feedback_rounds=2,
         )
         
         # 创建输出目录
@@ -553,9 +558,10 @@ def generate_video_task(
         
         # ========== 阶段 6: 生成代码 ==========
         task_id = callback.on_stage_start("generate_codes", "正在生成 Manim 代码。")
-        try:            
-            check_task_timeout()  # 模宗            
+        try:
+            check_task_timeout()  # 模宗
             agent.generate_codes()
+            agent._trim_sections_by_actual_tts_duration()
             callback.on_stage_finish(task_id, "Manim 代码生成成功。")
         except Exception as e:
             callback.on_stage_failed(task_id, f"Manim 代码生成失败: {str(e)}")
@@ -563,18 +569,33 @@ def generate_video_task(
         
         # ========== 阶段 7: 渲染视频 ==========
         task_id = callback.on_stage_start("render_videos", "正在渲染视频片段。")
-        try:            
-            check_task_timeout()  # 模宗            
-            agent.render_all_sections()
-            callback.on_stage_finish(task_id, "视频片段渲染成功。")
+        pivot_deadline = task_start_time + 1770
+        fallback_mode = False
+        merged_section_ids: set[str] = set()
+        try:
+            check_task_timeout()  # 模宗
+            elapsed_before_render = time.time() - task_start_time
+            remaining_budget = max(120.0, float(cfg.pipeline_budget_seconds) - elapsed_before_render)
+            section_timeout = max(60, min(cfg.render_timeout_seconds, int(remaining_budget * 0.8)))
+            agent.render_all_sections(section_timeout=section_timeout, deadline=pivot_deadline)
+            scanned_section_videos = agent._discover_completed_section_videos()
+            if scanned_section_videos:
+                agent.section_videos.update(scanned_section_videos)
+            fallback_mode = time.time() >= pivot_deadline
+            if fallback_mode:
+                callback.on_stage_finish(task_id, "已到 29 分 30 秒保底截止，停止等待剩余片段并进入合并。")
+            else:
+                callback.on_stage_finish(task_id, "视频片段渲染成功。")
         except Exception as e:
             callback.on_stage_failed(task_id, f"视频片段渲染失败: {str(e)}")
             raise
-        
+
         # ========== 阶段 8: 合并视频 ==========
         task_id = callback.on_stage_start("merge_videos", "正在合并视频。")
-        try:            
-            check_task_timeout()  # 模宗            
+        try:
+            if not agent.section_videos:
+                raise Exception("视频合并失败，未生成任何可用片段")
+            merged_section_ids = set(agent.section_videos.keys())
             final_video_path = agent.merge_videos()
             if not final_video_path:
                 raise Exception("视频合并失败，未生成最终视频")
@@ -582,30 +603,26 @@ def generate_video_task(
         except Exception as e:
             callback.on_stage_failed(task_id, f"视频合并失败: {str(e)}")
             raise
-        
+
         # ========== 阶段 9: 保存视频 ==========
         task_id = callback.on_stage_start("save_video", "正在保存视频文件。")
         try:
-            # 📍 新增：检查任务超时 + 校验输出规格
-            check_task_timeout()
-            
             from ..utils.file_utils import validate_video_output
-            
+
             validation_result = validate_video_output(
                 str(final_video_path),
-                max_duration=1800,      # 30 分钟
+                max_duration=1800,
                 min_width=1280,
                 min_height=720,
                 max_size_gb=3.0
             )
-            
+
             if not validation_result["valid"]:
                 error_messages = "\n".join(validation_result["errors"])
                 raise ValueError(
                     f"生成的视频不符合比赛规范:\n{error_messages}"
                 )
-            
-            # 📍 保存规格信息到元数据
+
             video_specs = {
                 "duration_seconds": validation_result["duration_seconds"],
                 "resolution": validation_result["resolution"],
@@ -613,12 +630,7 @@ def generate_video_task(
                 "file_size_gb": validation_result["file_size_gb"],
                 "validated_at": datetime.now().isoformat(),
             }
-            
-            subtitles = _collect_subtitles(agent)
-            subtitle_filename = None
-            subtitle_file_hash = None
 
-            # 准备元信息
             metadata = {
                 "knowledge_point": knowledge_point,
                 "subject": subject,
@@ -632,7 +644,8 @@ def generate_video_task(
                 "outline": agent.outline.__dict__ if agent.outline else None,
                 "token_usage": agent.token_usage,
                 "created_at": datetime.now().isoformat(),
-                "video_specs": video_specs,  # 📍 新增：规格信息
+                "video_specs": video_specs,
+                "merged_section_ids": sorted(merged_section_ids),
             }
             if competition_mode:
                 metadata.update({
@@ -641,11 +654,24 @@ def generate_video_task(
                     "student_persona": student_persona,
                 })
 
-            # 保存视频并获取哈希文件名
             video_filename = save_video_with_hash(final_video_path, metadata)
-            subtitle_file_hash = Path(video_filename).stem
 
-            if subtitles:
+            result["success"] = True
+            result["video_file"] = video_filename
+            result["token_usage"] = agent.token_usage
+
+            callback.on_stage_finish(task_id, "视频文件保存成功。")
+            callback.on_result("视频生成成功。", {
+                "video_file": video_filename,
+                "subtitle_file": result.get("subtitle_file"),
+                "token_usage": agent.token_usage,
+            })
+
+            subtitle_filename = None
+            subtitle_file_hash = Path(video_filename).stem
+            subtitles = _collect_subtitles(agent, merged_section_ids)
+
+            if subtitles and not fallback_mode:
                 subtitle_path = Path(final_video_path).with_suffix(".srt")
                 save_srt(subtitles, subtitle_path)
                 subtitle_filename = save_related_file(subtitle_file_hash, subtitle_path, extension=".srt")
@@ -654,26 +680,13 @@ def generate_video_task(
                 metadata["subtitle_created_at"] = datetime.now().isoformat()
                 result["subtitle_file"] = subtitle_filename
 
-                metadata_path = Path(settings.metadata_dir) / f"{subtitle_file_hash}.json"
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-            callback.on_stage_finish(task_id, "视频文件保存成功。")
-
-            result["success"] = True
-            result["video_file"] = video_filename
-            result["token_usage"] = agent.token_usage
+            metadata_path = Path(settings.metadata_dir) / f"{subtitle_file_hash}.json"
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
 
         except Exception as e:
             callback.on_stage_failed(task_id, f"视频文件保存失败: {str(e)}")
             raise
-
-        # ========== 发送最终结果 ==========
-        callback.on_result("视频生成成功。", {
-            "video_file": video_filename,
-            "subtitle_file": result.get("subtitle_file"),
-            "token_usage": agent.token_usage,
-        })
         
     except Exception as e:
         error_msg = f"视频生成失败: {str(e)}"

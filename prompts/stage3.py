@@ -108,7 +108,7 @@ def get_prompt3_code(
     **🔴 The following content MUST use MathTex, strictly forbidden to use Text():**
     - All mathematical formulas (e.g., `O(log n)`, `n²`, `2^7`, etc.)
     - Comparison expressions (e.g., `5 > 3`, `mid = 5`, etc.)
-    - **Checkmark ✓ and cross mark ✗ / ×** (Text cannot display them!)
+    - **Checkmark ✓ and cross mark ✗ / ×** (Text cannot display them reliably in this font setup)
 
     ```python
     # ✅ Correct: Use MathTex for mathematical expressions
@@ -722,8 +722,8 @@ def algo(data):
     | Symbol Type | Common Symbols | MathTex Writing |
     |---------|---------|-------------|
     | Superscript/subscript | ², ³, ₂, ₙ | `r"^2"`, `r"^3"`, `r"_2"`, `r"_n"` |
-    | Operators | ×, ÷, ≤, ≥, ≠ | `r"\\\\times"`, `r"\\\\div"`, `r"\\\\leq"`, `r"\\\\geq"`, `r"\\\\neq"` |
-    | Log/infinity | log₂, ∞ | `r"\\\\log_2"`, `r"\\\\infty"` |
+    | Operators | ×, ÷, ≤, ≥, ≠ | `r"\\times"`, `r"\\div"`, `r"\\leq"`, `r"\\geq"`, `r"\\neq"` |
+    | Log/infinity | log₂, ∞ | `r"\\log_2"`, `r"\\infty"` |
     | **Checkmark/cross** | **✓, ✗** | **`r"\\checkmark"`(green checkmark), `r"\\times"`(red cross)** |
 
     **⚠️ Violating this rule = Display boxes = Generation fails**

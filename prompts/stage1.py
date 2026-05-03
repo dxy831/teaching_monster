@@ -127,13 +127,19 @@ def get_prompt1_outline(
 
     Target topic: "{knowledge_point}"
     Subject: {subject_label}
-    Required total video duration: at least {duration} minutes.
+    
+    ## ⏱️ Duration & Structure Constraints (MANDATORY)
+    1. **Target Video Duration**: EXACTLY {duration} minutes ({duration * 60} seconds).
+    2. **Section Count**: You must plan exactly 6 to 9 sections based on the topic's complexity.
+    3. **The 50% Buffer Rule**: Actual voiceover TTS and animations will expand the planned duration by approximately 50%. 
+       - Therefore, the sum of all sections' `estimated_duration` MUST be approximately **{int((duration * 60) / 1.5)} seconds**.
+    4. **Duration Allocation**: You must decide the exact `estimated_duration` (in seconds) for every section. Do not just divide them equally; allocate more time for complex core concepts and examples.
 
     {profile_prompt}
     {force_difficulty_prompt}
 
     This means you need to:
-    1. Design sufficient sections (typically 8-12 sections).
+    1. Design sufficient sections (typically 6-9 sections).
     2. Keep the lesson coherent from intuition to core ideas, worked examples, and summary.
     3. Ensure the explanation style matches the subject and school-level audience.
 
@@ -219,12 +225,14 @@ def get_prompt1_outline(
             {{
                 "id": "section_0_intro",
                 "title": "Scene Introduction",
-                "content": "Real-life or classroom introduction that motivates the topic."{f',{chr(10)}                "code_mapping": "None"' if subject == 'computer_science' else ''}
+                "content": "Real-life or classroom introduction that motivates the topic.",
+                "estimated_duration": 30{f',{chr(10)}                "code_mapping": "None"' if subject == 'computer_science' else ''}
             }},
             {{
                 "id": "section_1",
                 "title": "Core Concept",
-                "content": "Introduce the main concept and key mechanism."{f',{chr(10)}                "code_mapping": "Describe which code segment this section maps to"' if subject == 'computer_science' else ''}
+                "content": "Introduce the main concept and key mechanism.",
+                "estimated_duration": 45{f',{chr(10)}                "code_mapping": "Describe which code segment this section maps to"' if subject == 'computer_science' else ''}
             }}
         ]
     }}

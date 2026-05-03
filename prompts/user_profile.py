@@ -515,7 +515,7 @@ def parse_profile_with_ai_sync(
         try:
             print(f"🔄 Parsing user profile (attempt {attempt}/{max_retries})...")
 
-            response, _ = api_function(prompt, max_tokens=2000)
+            response, _ = api_function(prompt, max_tokens=4000)
 
             if response is None:
                 print(f"⚠️ Attempt {attempt}: API returned empty response")

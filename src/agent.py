@@ -32,7 +32,7 @@ import pathlib
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 
 from src.gpt_request import *
 from prompts import *
@@ -87,21 +87,27 @@ class VideoFeedback:
     has_issues: bool
     suggested_improvements: List[str]
     raw_response: Optional[str] = None
+    is_good_enough: bool = False
+    good_enough_reason: Optional[str] = None
+    evaluation_scores: Optional[Dict[str, float]] = None
 
 
 @dataclass
 class RunConfig:
-    use_feedback: bool = False
-    use_assets: bool = False
+    use_feedback: bool = True
+    use_assets: bool = True
     api: Callable = None
-    feedback_rounds: int = 1
+    feedback_rounds: int = 2
     iconfinder_api_key: str = ""
-    max_code_token_length: int = 16000
+    max_code_token_length: int = 30000
     max_fix_bug_tries: int = 3
     max_regenerate_tries: int = 3
-    max_feedback_gen_code_tries: int = 1
-    max_mllm_fix_bugs_tries: int = 1
+    max_feedback_gen_code_tries: int = 2
+    max_mllm_fix_bugs_tries: int = 2
     duration: int = 5
+    max_video_seconds: int = 660
+    pipeline_budget_seconds: int = 1800
+    render_timeout_seconds: int = 600
     # 用户个性化配置
     user_profile: Optional[UserProfile] = None
     # 强制大纲难度（simple/medium/hard），若为空则由画像推断
@@ -140,6 +146,9 @@ class TeachingVideoAgent:
         self.max_mllm_fix_bugs_tries = cfg.max_mllm_fix_bugs_tries
         self.forced_difficulty_level = cfg.forced_difficulty_level
         self.duration = cfg.duration
+        self.max_video_seconds = cfg.max_video_seconds
+        self.pipeline_budget_seconds = cfg.pipeline_budget_seconds
+        self.render_timeout_seconds = cfg.render_timeout_seconds
         self.subject = cfg.subject or "computer_science"
         self.render_quality = cfg.render_quality or "-ql"
         self.use_assets = cfg.use_assets
@@ -191,6 +200,8 @@ class TeachingVideoAgent:
         self.section_steps = {}
         self.section_videos = {}
         self.video_feedbacks = {}
+        self.section_feedback_stop_flags = {}
+        self.section_feedback_stop_reasons = {}
 
         """6. For Efficiency"""
         self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -427,6 +438,19 @@ Do not include quotes or extra explanation.
         self.section_steps[section.id] = section_steps
         return section_steps
 
+    def _actual_tts_duration_for_section(self, section: Section) -> float:
+        section_steps = self.section_steps.get(section.id) or []
+        total_duration = 0.0
+        for step in section_steps:
+            if not isinstance(step, dict):
+                continue
+            audio_duration = step.get("audio_duration")
+            if isinstance(audio_duration, (int, float)) and audio_duration == audio_duration and audio_duration > 0:
+                total_duration += float(audio_duration)
+        if total_duration > 0:
+            return total_duration
+        return float(self._estimate_section_seconds(section))
+
     def _validate_synced_step_coverage(self, code: str, expected_steps: int) -> Tuple[bool, str]:
         try:
             tree = ast.parse(code)
@@ -507,7 +531,150 @@ Do not include quotes or extra explanation.
 
         return normalized_groups
 
+    def _get_user_difficulty_preference(self) -> str:
+        summary = {}
+        if self.user_profile and getattr(self.user_profile, "parsed_profile", None):
+            summary = self.user_profile.parsed_profile.get("user_summary", {}) or {}
+        return str(summary.get("difficulty_preference", "intermediate")).strip().lower()
+
+    def _select_duration_with_ai(self) -> int:
+        difficulty = self._get_user_difficulty_preference() or "intermediate"
+        prompt = f"""
+You are planning a learning video length.
+
+Knowledge point: {self.learning_topic}
+Learner difficulty preference: {difficulty}
+
+Choose the best total duration in minutes.
+Use these rules when deciding:
+- Simpler content should usually be shorter.
+- If the student's foundation is weaker, the video should usually be longer.
+- Consider both topic simplicity and learner foundation together, not separately.
+
+Example:
+- Simple topic + strong foundation -> choose a shorter duration, such as 2 or 3 minutes.
+- More complex topic + weaker foundation -> choose a longer duration, such as 4 or 5 minutes.
+
+Constraints:
+- Must be an integer
+- Must be between 2 and 5 inclusive
+
+Return only one integer number.
+"""
+        response = self._request_api_and_track_tokens(prompt, max_tokens=20)
+        raw_text = self._extract_response_text(response)
+        match = re.search(r"\d+", raw_text)
+        if not match:
+            return 3
+        value = int(match.group(0))
+        if value < 2 or value > 5:
+            return 3
+        return value
+
+    def _ensure_ai_duration_selected(self) -> None:
+        if getattr(self, "_ai_duration_selected", False):
+            return
+        try:
+            selected = self._select_duration_with_ai()
+        except Exception:
+            selected = 3
+        if selected < 2 or selected > 5:
+            selected = 3
+        self.duration = selected
+        self._ai_duration_selected = True
+        print(f"⏱️ AI 选择视频时长: {self.duration} 分钟")
+
+    def _estimate_section_seconds(self, section: Section) -> int:
+        if isinstance(section.estimated_duration, (int, float)) and section.estimated_duration > 0:
+            return int(section.estimated_duration)
+        return 30
+
+    def _fallback_trim_sections_by_duration(self, sections: List[Section], target_minutes: int) -> List[Section]:
+        target_seconds = max(0, int(target_minutes) * 60)
+        selected = []
+        total_seconds = 0
+        for section in sections:
+            section_seconds = self._estimate_section_seconds(section)
+            if selected and total_seconds + section_seconds > target_seconds:
+                break
+            selected.append(section)
+            total_seconds += section_seconds
+        return selected or sections
+
+    def _video_limit_minutes(self) -> int:
+        return max(1, int(self.max_video_seconds / 60))
+
+    def _select_sections_with_ai(self) -> None:
+        if not self.sections:
+            return
+
+        total_estimated = sum(self._estimate_section_seconds(s) for s in self.sections)
+        hard_limit_seconds = self.max_video_seconds
+
+        if total_estimated <= hard_limit_seconds and len(self.sections) <= 10:
+            print(f"🧩 当前总预估时长为 {total_estimated} 秒，节数为 {len(self.sections)}，未超过硬上限（{hard_limit_seconds} 秒），无需删减")
+            return
+
+        payload = []
+        for section in self.sections:
+            preview_lines = section.lecture_lines[:2] if section.lecture_lines else []
+            payload.append(
+                {
+                    "id": section.id,
+                    "title": section.title,
+                    "estimated_seconds": self._estimate_section_seconds(section),
+                    "preview_lines": preview_lines,
+                }
+            )
+
+        prompt = f"""
+You are selecting the most critical sections for a lesson while preserving logical flow.
+
+Target total duration: {self.duration} minutes (3-8 minutes)
+Knowledge point: {self.learning_topic}
+Learner difficulty: {self._get_user_difficulty_preference()}
+
+Sections (in original order):
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+Task:
+- Choose a subset of section IDs that keeps the lesson logically coherent.
+- Keep the original order (do not reorder).
+- Aim to fit the target duration based on estimated_seconds.
+
+Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
+"""
+        try:
+            response = self._request_api_and_track_tokens(prompt, max_tokens=200)
+            raw_text = self._extract_response_text(response)
+            selected_ids = json.loads(extract_json_from_markdown(raw_text))
+        except Exception:
+            selected_ids = []
+
+        id_set = {section.id for section in self.sections}
+        if not isinstance(selected_ids, list):
+            selected_ids = []
+        selected_ids = [section_id for section_id in selected_ids if section_id in id_set]
+
+        if not selected_ids:
+            self.sections = self._fallback_trim_sections_by_duration(self.sections, self._video_limit_minutes())
+            print(f"🧩 AI 选节失败，已按时长顺序截断到 {self.max_video_seconds} 秒硬上限")
+            return
+
+        selected_set = set(selected_ids)
+        ordered_sections = [section for section in self.sections if section.id in selected_set]
+
+        if not ordered_sections:
+            self.sections = self._fallback_trim_sections_by_duration(self.sections, self._video_limit_minutes())
+            print(f"🧩 AI 选节为空，已按时长顺序截断到 {self.max_video_seconds} 秒硬上限")
+            return
+
+        trimmed_sections = self._fallback_trim_sections_by_duration(ordered_sections, self._video_limit_minutes())
+        self.sections = trimmed_sections
+        print(f"🧩 AI 已筛选小节: {len(self.sections)} 个")
+
     def generate_outline(self) -> TeachingOutline:
+        self._ensure_ai_duration_selected()
         outline_file = self.output_dir / "outline.json"
 
         if outline_file.exists():
@@ -596,6 +763,7 @@ Do not include quotes or extra explanation.
 
             prompt2 = get_prompt2_storyboard(
                 outline=json.dumps(self.outline.__dict__, ensure_ascii=False, indent=2),
+                duration=self.duration,
                 reference_image_path=refer_img_path,
                 user_profile=self.user_profile,
                 subject=self.subject,
@@ -658,6 +826,7 @@ Do not include quotes or extra explanation.
             )
             self.sections.append(section)
 
+        self._select_sections_with_ai()
         print(f"== 分镜处理完成，共生成 {len(self.sections)} 个小节")
         return self.sections
 
@@ -1034,6 +1203,108 @@ Do not include quotes or extra explanation.
         self.section_steps[section.id] = section_steps
         return section_steps
 
+    def _trim_sections_by_actual_tts_duration(self) -> None:
+        if not self.sections:
+            return
+
+        # 1. 识别固定小节（封面/概览）
+        pinned_ids = {"section_cover", "section_overview"}
+        pinned_sections = [s for s in self.sections if s.id in pinned_ids]
+        variable_sections = [s for s in self.sections if s.id not in pinned_ids]
+
+        if not variable_sections:
+            return
+
+        # 2. 计算固定小节的时长和剩余预算
+        pinned_duration = sum(self._actual_tts_duration_for_section(s) for s in pinned_sections)
+        remaining_budget = max(0.0, float(self.max_video_seconds) - pinned_duration)
+
+        # 3. 计算所有可变小节的总长
+        variable_total_duration = sum(self._actual_tts_duration_for_section(s) for s in variable_sections)
+
+        # 4. 如果没超预算，直接结束
+        if variable_total_duration <= remaining_budget:
+            total_duration = pinned_duration + variable_total_duration
+            print(f"⏱️ TTS 实际总时长 {total_duration:.1f} 秒，未超过上限 {self.max_video_seconds} 秒，无需裁剪")
+            return
+
+        print(f"⚠️ 可变小节 TTS 时长 {variable_total_duration:.1f} 秒超过剩余预算 {remaining_budget:.1f} 秒 (上限 {self.max_video_seconds} 秒)，开始使用 AI 全局优化裁剪...")
+
+        # 5. 准备发给 AI 的可变小节 Payload
+        payload = []
+        for section in variable_sections:
+            dur = self._actual_tts_duration_for_section(section)
+            if dur <= 0:
+                dur = float(self._estimate_section_seconds(section))
+            
+            payload.append({
+                "id": section.id,
+                "title": section.title,
+                "actual_tts_seconds": round(dur, 1),
+                "preview_lines": section.lecture_lines[:2] if section.lecture_lines else []
+            })
+
+        # 6. 调用 AI 选择最连贯的子集
+        prompt = f"""
+You are selecting the most critical sections for a lesson while preserving logical flow to fit within a strict real audio length limit.
+
+Remaining budget for variable sections: {remaining_budget} seconds (Max total: {self.max_video_seconds}s)
+Knowledge point: {self.learning_topic}
+Learner difficulty: {self._get_user_difficulty_preference()}
+
+Variable Sections (in original order, with actual TTS duration):
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+Task:
+- Choose a subset of variable section IDs that keeps the lesson logically coherent.
+- The sum of `actual_tts_seconds` of the chosen IDs MUST NOT exceed {remaining_budget} seconds.
+- Keep the original order (do not reorder).
+- Trim the least critical sections that do not affect the main logic flow.
+
+Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "section_5"].
+"""
+        try:
+            response = self._request_api_and_track_tokens(prompt, max_tokens=200)
+            raw_text = self._extract_response_text(response)
+            selected_ids = json.loads(extract_json_from_markdown(raw_text))
+        except Exception:
+            selected_ids = []
+
+        if not isinstance(selected_ids, list):
+            selected_ids = []
+
+        # 7. 应用 AI 选择结果及后备逻辑
+        id_set = {s.id for s in variable_sections}
+        selected_ids = [sid for sid in selected_ids if sid in id_set]
+
+        # 重新构建可变小节列表（按原序）
+        ai_selected_variable = [s for s in variable_sections if s.id in selected_ids]
+
+        # 如果 AI 结果为空或依然超时，执行最后的贪心截断兜底
+        final_selected_variable = []
+        current_dur = 0.0
+        # 如果 AI 选了就用 AI 的，没选就用全部可变节进行兜底处理
+        candidate_pool = ai_selected_variable if ai_selected_variable else variable_sections
+
+        for s in candidate_pool:
+            dur = self._actual_tts_duration_for_section(s)
+            if dur <= 0: dur = float(self._estimate_section_seconds(s))
+            if final_selected_variable and current_dur + dur > remaining_budget:
+                continue
+            final_selected_variable.append(s)
+            current_dur += dur
+
+        # 8. 更新 self.sections
+        kept_ids = pinned_ids | {s.id for s in final_selected_variable}
+        original_count = len(self.sections)
+        trimmed_sections = [s for s in self.sections if s.id not in kept_ids]
+        self.sections = [s for s in self.sections if s.id in kept_ids]
+
+        total_duration = pinned_duration + current_dur
+        print(f"⏱️ 最终 TTS 实际总时长 {total_duration:.1f} 秒，保留 {len(self.sections)}/{original_count} 节")
+        if trimmed_sections:
+            print(f"✂️ 已按 AI 逻辑优化裁剪小节: {[s.id for s in trimmed_sections]}")
+
     def debug_and_fix_code(self, section_id: str, max_fix_attempts: int = 3) -> Tuple[bool, Optional[str]]:
         """Enhanced debug and fix code method
         
@@ -1181,6 +1452,7 @@ Do not include quotes or extra explanation.
         positions = self.extractor.extract_grid_positions(current_code)
         position_table = self.extractor.generate_position_table(positions)
         analysis_prompt = get_prompt4_layout_feedback(section=section, position_table=position_table)
+        evaluation_prompt = get_prompt_aes(self.learning_topic)
 
         def _parse_layout(feedback_content):
             has_layout_issues, suggested_improvements = False, []
@@ -1209,16 +1481,66 @@ Do not include quotes or extra explanation.
 
             return has_layout_issues, suggested_improvements
 
+        def _parse_stage5_evaluation(feedback_content):
+            try:
+                data = json.loads(feedback_content)
+            except json.JSONDecodeError:
+                print(f"⚠️ {self.learning_topic} Stage5 评分 JSON 解析失败，跳过 good-enough 判定")
+                return False, None, None, []
+
+            scores = {
+                "element_layout": float((data.get("element_layout") or {}).get("score", 0) or 0),
+                "overall_score": float(data.get("overall_score", 0) or 0),
+                "attractiveness": float((data.get("attractiveness") or {}).get("score", 0) or 0),
+                "visual_consistency": float((data.get("visual_consistency") or {}).get("score", 0) or 0),
+            }
+            hard_blockers = [str(item).strip() for item in (data.get("hard_blockers") or []) if str(item).strip()]
+            prompt_decision = bool(data.get("is_good_enough", False))
+            reason = str(data.get("good_enough_reason", "")).strip() or None
+            average_visual_score = (
+                scores["element_layout"] + scores["attractiveness"] + scores["visual_consistency"]
+            ) / 3
+            meets_threshold = (
+                scores["element_layout"] >= 15
+                and scores["overall_score"] >= 78
+                and average_visual_score >= 15
+            )
+            is_good_enough = (prompt_decision or meets_threshold) and not hard_blockers
+            return is_good_enough, reason, scores, hard_blockers
+
         try:
             response = request_gemini_video_img(prompt=analysis_prompt, video_path=video_path, image_path=self.GRID_IMG_PATH)
             feedback_content = extract_answer_from_response(response)
             has_layout_issues, suggested_improvements = _parse_layout(feedback_content)
+
+            evaluation_response = request_gemini_video_img(
+                prompt=evaluation_prompt,
+                video_path=video_path,
+                image_path=self.GRID_IMG_PATH,
+            )
+            evaluation_content = extract_answer_from_response(evaluation_response)
+            is_good_enough, good_enough_reason, evaluation_scores, hard_blockers = _parse_stage5_evaluation(
+                evaluation_content
+            )
+            if has_layout_issues or hard_blockers:
+                is_good_enough = False
+
+            raw_response = json.dumps(
+                {
+                    "layout_feedback": feedback_content,
+                    "stage5_evaluation": evaluation_content,
+                },
+                ensure_ascii=False,
+            )
             feedback = VideoFeedback(
                 section_id=section.id,
                 video_path=video_path,
                 has_issues=has_layout_issues,
                 suggested_improvements=suggested_improvements,
-                raw_response=feedback_content,
+                raw_response=raw_response,
+                is_good_enough=is_good_enough,
+                good_enough_reason=good_enough_reason,
+                evaluation_scores=evaluation_scores,
             )
             self.video_feedbacks[f"{section.id}_round{round_number}"] = feedback
             return feedback
@@ -1377,12 +1699,22 @@ Do not include quotes or extra explanation.
             if self.use_feedback:
                 try:
                     for round in range(self.feedback_rounds):
+                        if self.section_feedback_stop_flags.get(section_id):
+                            print(f"✅ {self.learning_topic} {section_id} 已标记停止优化，跳过剩余反馈轮次")
+                            break
                         current_video = self.section_videos.get(section_id)
                         if not current_video:
                             print(f"❌ {self.learning_topic} {section_id} 没有可用视频进行 MLLM 反馈")
                             return success
                         try:
                             feedback = self.get_mllm_feedback(section, current_video, round_number=round + 1)
+                            if feedback.is_good_enough:
+                                self.section_feedback_stop_flags[section_id] = True
+                                self.section_feedback_stop_reasons[section_id] = feedback.good_enough_reason or "stage5 evaluation passed"
+                                print(
+                                    f"✅ {self.learning_topic} {section_id} 第 {round+1} 轮已判定足够好，停止后续优化: {self.section_feedback_stop_reasons[section_id]}"
+                                )
+                                break
 
                             optimization_success = self.optimize_with_feedback(section, feedback)
                             if optimization_success:
@@ -1420,8 +1752,64 @@ Do not include quotes or extra explanation.
             print(f"❌ {self.learning_topic} {section_id} 渲染过程异常: {str(e)}")
             return section_id, False, None
 
-    def render_all_sections(self, max_workers: int = 12) -> Dict[str, str]:
+    def _is_video_file_stable(self, video_path: Path, interval_seconds: float = 0.2) -> bool:
+        video_path = Path(video_path)
+        if not video_path.exists() or video_path.stat().st_size <= 0:
+            return False
+
+        first_size = video_path.stat().st_size
+        time.sleep(interval_seconds)
+        if not video_path.exists():
+            return False
+        second_size = video_path.stat().st_size
+        return first_size == second_size and second_size > 0
+
+    def _discover_completed_section_videos(self) -> Dict[str, str]:
+        discovered = {}
+        ordered_sections = self.sections or []
+
+        for section in ordered_sections:
+            candidate_paths = []
+            optimized_video_path = self.output_dir / "optimized_videos" / f"{section.id}_optimized.mp4"
+            remux_video_path = self.output_dir / "audio_remux" / f"{section.id}_with_audio.mp4"
+            candidate_paths.extend([optimized_video_path, remux_video_path])
+
+            scene_name = f"{section.id.title().replace('_', '')}Scene"
+            code_file = f"{section.id}.py"
+            candidate_paths.extend([
+                self.output_dir / "media" / "videos" / f"{code_file.replace('.py', '')}" / "480p15" / f"{scene_name}.mp4",
+                self.output_dir / "media" / "videos" / "480p15" / f"{scene_name}.mp4",
+                self.output_dir / "media" / "videos" / f"{code_file.replace('.py', '')}" / "720p30" / f"{scene_name}.mp4",
+                self.output_dir / "media" / "videos" / "720p30" / f"{scene_name}.mp4",
+                self.output_dir / "media" / "videos" / f"{code_file.replace('.py', '')}" / "1080p60" / f"{scene_name}.mp4",
+                self.output_dir / "media" / "videos" / "1080p60" / f"{scene_name}.mp4",
+            ])
+
+            seen = set()
+            for candidate_path in candidate_paths:
+                candidate_path = Path(candidate_path)
+                candidate_key = str(candidate_path.resolve()) if candidate_path.exists() else str(candidate_path)
+                if candidate_key in seen or not candidate_path.exists() or candidate_path.stat().st_size <= 0:
+                    continue
+                seen.add(candidate_key)
+                if not self._is_video_file_stable(candidate_path):
+                    continue
+                if self._video_has_audio_stream(candidate_path):
+                    discovered[section.id] = str(candidate_path)
+                    break
+
+        return discovered
+
+    def render_all_sections(
+        self,
+        max_workers: int = 12,
+        section_timeout: Optional[int] = None,
+        deadline: Optional[float] = None,
+    ) -> Dict[str, str]:
         print(f"🎥 开始并行渲染所有分节视频 (最多 {max_workers} 个进程)...")
+
+        if section_timeout is None:
+            section_timeout = self.render_timeout_seconds
 
         tasks = []
         for section in self.sections:
@@ -1441,7 +1829,8 @@ Do not include quotes or extra explanation.
         failed_count = 0
 
         try:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            executor = ProcessPoolExecutor(max_workers=max_workers)
+            try:
                 future_to_section = {}
                 for task in tasks:
                     try:
@@ -1452,22 +1841,53 @@ Do not include quotes or extra explanation.
                         print(f"⚠️ 提交 {section_id} 任务时出错: {str(e)}")
                         failed_count += 1
 
-                for future in as_completed(future_to_section):
-                    section_id = future_to_section[future]
-                    try:
-                        sid, success, video_path = future.result(timeout=1200)
+                pending_futures = set(future_to_section)
+                while pending_futures:
+                    timeout = None
+                    if deadline is not None:
+                        remaining = deadline - time.time()
+                        if remaining <= 0:
+                            discovered_results = self._discover_completed_section_videos()
+                            for sid, video_path in discovered_results.items():
+                                if sid not in results:
+                                    results[sid] = video_path
+                                    successful_count += 1
+                            print("⏰ 已到 29 分 30 秒保底截止，停止等待剩余渲染任务")
+                            break
+                        timeout = min(float(section_timeout), remaining)
 
-                        if success and video_path:
-                            results[sid] = video_path
-                            successful_count += 1
-                            print(f"✅ {sid} 视频渲染成功: {video_path}")
-                        else:
+                    done_futures, pending_futures = wait(
+                        pending_futures,
+                        timeout=timeout,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    if not done_futures:
+                        discovered_results = self._discover_completed_section_videos()
+                        for sid, video_path in discovered_results.items():
+                            if sid not in results:
+                                results[sid] = video_path
+                                successful_count += 1
+                        print("⏰ 已到 29 分 30 秒保底截止，立即扫描已落盘片段并进入视频合并")
+                        break
+
+                    for future in done_futures:
+                        section_id = future_to_section[future]
+                        try:
+                            sid, success, video_path = future.result()
+
+                            if success and video_path:
+                                results[sid] = video_path
+                                successful_count += 1
+                                print(f"✅ {sid} 视频渲染成功: {video_path}")
+                            else:
+                                failed_count += 1
+                                print(f"⚠️ {sid} 视频渲染失败")
+
+                        except Exception as e:
                             failed_count += 1
-                            print(f"⚠️ {sid} 视频渲染失败")
-
-                    except Exception as e:
-                        failed_count += 1
-                        print(f"❌ {section_id} 视频渲染过程错误: {str(e)}")
+                            print(f"❌ {section_id} 视频渲染过程错误: {str(e)}")
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
 
         except Exception as e:
             print(f"❌ 并行渲染过程中出现严重错误: {str(e)}")
@@ -1548,16 +1968,28 @@ Do not include quotes or extra explanation.
 
     def GENERATE_VIDEO(self) -> str:
         """Generate complete video with MLLM feedback optimization"""
+        pipeline_start = time.time()
         try:
+            self._ensure_ai_duration_selected()
             self.generate_outline()
             self.generate_storyboard()
             self.inject_overview_section()
             self.inject_cover_section()
             self.generate_codes()
-            self.render_all_sections()
+            self._trim_sections_by_actual_tts_duration()
+
+            elapsed = time.time() - pipeline_start
+            remaining_budget = max(120.0, float(self.pipeline_budget_seconds) - elapsed)
+            section_timeout = max(60, min(self.render_timeout_seconds, int(remaining_budget * 0.8)))
+            print(
+                f"⏳ 流水线已用时 {elapsed:.1f} 秒 / {self.pipeline_budget_seconds} 秒，剩余 {remaining_budget:.1f} 秒，单节渲染超时 {section_timeout} 秒"
+            )
+
+            self.render_all_sections(section_timeout=section_timeout)
             final_video = self.merge_videos()
             if final_video:
-                print(f"🎉 视频生成成功: {final_video}")
+                total_elapsed = time.time() - pipeline_start
+                print(f"🎉 视频生成成功，总耗时 {total_elapsed:.1f} 秒: {final_video}")
                 return final_video
             else:
                 print(f"❌ {self.learning_topic} 失败")
@@ -1606,7 +2038,7 @@ def process_batch(batch_data, cfg: RunConfig):
 
 
 def run_Code2Video(
-    knowledge_points: List[str], folder_path: Path, parallel=True, batch_size=3, max_workers=8, cfg: RunConfig = RunConfig()
+    knowledge_points: List[str], folder_path: Path, parallel=True, batch_size=3, max_workers=12, cfg: RunConfig = RunConfig()
 ):
     all_results = []
 
@@ -1700,6 +2132,9 @@ def build_and_parse_args():
     parser.add_argument("--max_mllm_fix_bugs_tries", type=int, help="max # tries for Critic to fix bug", default=3)
     parser.add_argument("--feedback_rounds", type=int, default=2)
     parser.add_argument("--duration", type=int, default=5, help="Estimated video duration in minutes")
+    parser.add_argument("--max_video_seconds", type=int, default=600, help="Max final video duration in seconds")
+    parser.add_argument("--pipeline_budget_seconds", type=int, default=1800, help="Total wall-clock budget for the full pipeline in seconds")
+    parser.add_argument("--render_timeout_seconds", type=int, default=600, help="Per-section render timeout in seconds")
 
     parser.add_argument("--parallel", action="store_true", default=False)
     parser.add_argument("--no_parallel", action="store_false", dest="parallel")
@@ -1790,6 +2225,9 @@ if __name__ == "__main__":
         max_mllm_fix_bugs_tries=args.max_mllm_fix_bugs_tries,
         feedback_rounds=args.feedback_rounds,
         duration=args.duration,
+        max_video_seconds=args.max_video_seconds,
+        pipeline_budget_seconds=args.pipeline_budget_seconds,
+        render_timeout_seconds=args.render_timeout_seconds,
         user_profile=user_profile,
     )
     

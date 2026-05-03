@@ -22,6 +22,10 @@ You are an educational content evaluation expert specializing in instructional v
 **1. Element Layout - 20 points**
 Evaluate the spatial arrangement and organization of visual elements:
 - Clarity and readability of the left-side presentation (text/diagrams)
+- Whether lecture lines on the left are blocked, crowded, or visually obstructed by animation elements
+- Whether animation elements, formulas, labels, and shapes overlap in a way that harms readability
+- Whether any element is off-screen, clipped, or visibly cut off
+- Whether labels stay close enough to their corresponding objects to remain understandable
 - Optimal positioning and sizing of right-side animation content
 - Balance between presentation area and animation area
 - Appropriate use of whitespace and visual hierarchy
@@ -67,6 +71,9 @@ Evaluate overall unity and coherence:
 - Calculate the total score
 - Provide specific English feedback for each dimension
 - Evaluate whether the video effectively teaches the specified knowledge point
+- Decide whether this section is already good enough to stop further optimization
+- Treat the following as hard blockers that prevent `is_good_enough=true`: lecture-line obstruction, readability-harming overlap, off-screen clipping, obvious rendering failure, or severely crowded layout
+- Minor polish suggestions are allowed even when the section is already good enough
 
 **Response Format:**
 Must strictly output in the following JSON format:
@@ -93,113 +100,11 @@ Must strictly output in the following JSON format:
     "feedback": "Evaluation of visual unity..."
 }},
 "overall_score": [0-100],
+"is_good_enough": true,
+"good_enough_reason": "Explain briefly why this section should or should not stop further optimization.",
+"hard_blockers": ["List hard blockers such as obstruction, overlap, clipping, rendering failure, or severe crowding. Use an empty list when none exist."],
 "summary": "Overall evaluation and key recommendations...",
 "strengths": ["List of notable strengths"],
 "improvements": ["List of suggested improvements"]
-}}
-"""
-
-
-def get_prompt_competition_rubric(knowledge_point, subject_domain=None):
-    """
-    Competition-aligned evaluation rubric with four dimensions matching the judging criteria:
-    (1) Factual Accuracy & Evidence Basis
-    (2) Pedagogical Logic & Scaffolding
-    (3) Learner Adaptation & ZPD Fit
-    (4) Engagement & Multimodal Consistency
-    """
-    subject_hint = ""
-    if subject_domain:
-        subject_map = {
-            "physics": "Physics (AP Physics 1/C reference)",
-            "biology": "Biology (AP Biology reference)",
-            "math": "Mathematics (AP Calculus/Statistics reference)",
-            "computer_science": "Computer Science (AP CS A/Principles reference)",
-        }
-        subject_hint = f"\n**Subject Domain:** {subject_map.get(subject_domain, subject_domain)}\n"
-
-    prefix = ""
-    if knowledge_point:
-        prefix = f"""
-**Knowledge Point:** "{knowledge_point}"
-{subject_hint}
-Please evaluate this educational video specifically for its effectiveness in teaching this knowledge point, using the AP curriculum as a reference standard for content depth and accuracy.
-"""
-
-    return f"""
-You are an expert educational content judge evaluating a teaching video for a competition. Apply the following four-criterion rubric strictly. Each criterion is scored out of 25 points (total 100).
-
-{prefix}
-
-**EVALUATION RUBRIC:**
-
-**1. Factual Accuracy & Evidence Basis — 25 points**
-This is the non-negotiable foundation of teaching quality.
-
-- **Zero-Hallucination Check (0-10):** Are ALL technical terms, formulas, derivation steps, historical data, constants, and code examples exactly correct? Any fabricated, misleading, or approximately-correct information is a critical failure. Score 0 if any hallucinated fact is found.
-- **Knowledge Depth & Verification (0-8):** Does the content reach core principles rather than just surface-level term-stacking? Are referenced academic cases, experiments, or examples real and highly relevant to the topic?
-- **Citation & Attribution (0-7):** Are external facts properly attributed to their source concepts (e.g., "from Newton's Second Law", "by the Central Limit Theorem")? No plagiarism or copyright violations.
-
-**2. Pedagogical Logic & Scaffolding — 25 points**
-Evaluates the structural quality of knowledge delivery.
-
-- **Scaffolding Construction (0-12):** Does the video follow a "simple to complex" progression? Does it start from concepts the learner already knows and gradually build bridges to new knowledge? Or does it abruptly jump to advanced concepts?
-- **Narrative Coherence (0-8):** Are transitions between paragraphs/sections natural and smooth? Do knowledge points interlock to form a complete logical chain, rather than fragmented information assembly?
-- **AP Pattern Compliance (0-5):** Does the teaching structure follow the AP-standard pattern for this subject? (Physics: Phenomenon→Model→Predict→Verify; Biology: BigIdea→Mechanism→Application; Math: Intuition→Definition→Derivation→Example; CS: Problem→Trace→Implement→Analyze)
-
-**3. Learner Adaptation & ZPD Fit — 25 points**
-Evaluates the system's understanding of and response to the learner profile.
-
-- **Zone of Proximal Development Recognition (0-10):** Does the AI accurately identify the learner's knowledge boundary? (e.g., for a high school student who only knows algebra, the system should avoid unexplained partial differential equations and instead use intuitive geometric illustrations.)
-- **Language & Analogy Calibration (0-9):** Are the explanation style, vocabulary depth, and examples appropriate for the target audience's life experience and cognitive level?
-- **Prior Knowledge Activation (0-6):** Does each new concept section begin by connecting to something the learner already knows? Is the progression from known to unknown explicit?
-
-**4. Engagement & Multimodal Consistency — 25 points**
-Evaluates the material's attractiveness and delivery efficiency.
-
-- **Narrative Appeal (0-7):** Does the video weave dry knowledge into vivid cases or metaphors? Does it spark learning motivation and create an intrinsic drive to "keep watching"?
-- **Cognitive Focus Maintenance (0-8):** Does the video employ effective teaching strategies (suspense design, Socratic questioning, periodic mini-summaries) to maintain high-intensity attention and avoid monotonous one-way output?
-- **Multimodal Alignment (0-10):** Do the visual elements (diagrams, animations, cursor traces) and audio narration synchronize and reinforce each other? Visuals should not be mere decoration — they must concretely aid understanding of abstract concepts (e.g., when discussing matrix rotation, the screen should simultaneously show a rotation animation).
-
-**Scoring Instructions:**
-- Provide a score for each sub-criterion and each main dimension
-- Calculate the total score out of 100
-- Provide specific English feedback for each dimension
-- Flag any factual errors found (list them explicitly)
-- Note any instances where narration and visuals are misaligned
-
-**Response Format:**
-Must strictly output in the following JSON format:
-
-{{
-"factual_accuracy": {{
-    "zero_hallucination": {{"score": "[0-10]", "feedback": "..."}},
-    "knowledge_depth": {{"score": "[0-8]", "feedback": "..."}},
-    "citation_attribution": {{"score": "[0-7]", "feedback": "..."}},
-    "dimension_score": "[0-25]",
-    "factual_errors_found": ["List any specific factual errors detected, or empty if none"]
-}},
-"pedagogical_logic": {{
-    "scaffolding": {{"score": "[0-12]", "feedback": "..."}},
-    "narrative_coherence": {{"score": "[0-8]", "feedback": "..."}},
-    "ap_pattern_compliance": {{"score": "[0-5]", "feedback": "..."}},
-    "dimension_score": "[0-25]"
-}},
-"learner_adaptation": {{
-    "zpd_recognition": {{"score": "[0-10]", "feedback": "..."}},
-    "language_calibration": {{"score": "[0-9]", "feedback": "..."}},
-    "prior_knowledge_activation": {{"score": "[0-6]", "feedback": "..."}},
-    "dimension_score": "[0-25]"
-}},
-"engagement_multimodal": {{
-    "narrative_appeal": {{"score": "[0-7]", "feedback": "..."}},
-    "cognitive_focus": {{"score": "[0-8]", "feedback": "..."}},
-    "multimodal_alignment": {{"score": "[0-10]", "feedback": "..."}},
-    "dimension_score": "[0-25]"
-}},
-"overall_score": "[0-100]",
-"summary": "Overall evaluation and key recommendations...",
-"strengths": ["List of notable strengths"],
-"critical_issues": ["List of critical issues that must be fixed, especially any factual errors or major pedagogical gaps"]
 }}
 """

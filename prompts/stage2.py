@@ -47,6 +47,7 @@ def _get_subject_visual_strategy(subject: str, target_language: str) -> str:
 
 def get_prompt2_storyboard(
     outline: str,
+    duration: int = 5,
     reference_image_path: Optional[str] = None,
     user_profile: Optional[UserProfile] = None,
     subject: str = "computer_science",
@@ -115,8 +116,11 @@ def get_prompt2_storyboard(
         - **NEVER skip explaining on-screen content**: If a new object/code appears, there must be a corresponding lecture line and animation step to explain/highlight it.
 
     4.  **Duration Planning**:
-        - Each section must include `estimated_duration` in seconds.
-        - Estimate conservatively so learners have time to follow the explanation.
+        - Target total duration: {duration} minutes.
+        - Remember the 50% buffer rule from the outline: planned durations should sum to approximately {int(duration * 60 / 1.5)} seconds across all sections.
+        - The input `outline` already provides a specific `estimated_duration` for each section.
+        - You MUST strictly follow the `estimated_duration` pre-calculated in the outline when designing exactly how many and how long your animations/lecture lines will take.
+        - Provide a realistic `estimated_duration` field matching the outline's intended scale, plus your detailed `lecture_lines` that can comfortably fit within it (speech averages roughly 2-3 words per second).
 
     5.  **Subject Constraints**:
         - For computer_science, code examples must use **{target_language}**.
