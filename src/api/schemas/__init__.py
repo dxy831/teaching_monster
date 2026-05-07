@@ -3,17 +3,17 @@ Pydantic 模型定义
 """
 
 from .request import (
+    CompetitionGenerateRequest,
+    CompetitionGenerateResponse,
+    HealthResponse,
     VideoGenerateRequest,
     VideoGenerateResponse,
-    TaskStatusResponse,
-    SSEEvent,
-    EventType,
 )
 
 __all__ = [
+    "CompetitionGenerateRequest",
+    "CompetitionGenerateResponse",
+    "HealthResponse",
     "VideoGenerateRequest",
-    "VideoGenerateResponse", 
-    "TaskStatusResponse",
-    "SSEEvent",
-    "EventType",
+    "VideoGenerateResponse",
 ]

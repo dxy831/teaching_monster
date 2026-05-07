@@ -505,7 +505,7 @@ def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
             raise
 
         token = _call_stage_start(hooks, "render_videos", "正在渲染视频片段。")
-        pivot_deadline = task_start_time + 1770
+        pivot_deadline = task_start_time + 1785
         fallback_mode = False
         merged_section_ids: set[str] = set()
         try:
@@ -514,13 +514,15 @@ def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
             remaining_budget = max(120.0, float(cfg.pipeline_budget_seconds) - elapsed_before_render)
             section_timeout = max(60, min(cfg.render_timeout_seconds, int(remaining_budget * 0.8)))
             agent.render_all_sections(section_timeout=section_timeout, deadline=pivot_deadline)
-            scanned_section_videos = agent._discover_completed_section_videos()
-            if scanned_section_videos:
-                agent.section_videos.update(scanned_section_videos)
             fallback_mode = time.time() >= pivot_deadline
             if fallback_mode:
-                _call_stage_finish(hooks, token, "已到 29 分 30 秒保底截止，停止等待剩余片段并进入合并。")
+                scanned_section_videos = agent._discover_fallback_section_videos()
+                agent.section_videos = dict(scanned_section_videos)
+                _call_stage_finish(hooks, token, "已到 29 分 45 秒保底截止，停止等待剩余片段并进入合并。")
             else:
+                scanned_section_videos = agent._discover_completed_section_videos()
+                if scanned_section_videos:
+                    agent.section_videos.update(scanned_section_videos)
                 _call_stage_finish(hooks, token, "视频片段渲染成功。")
         except Exception as exc:
             _call_stage_failed(hooks, token, f"视频片段渲染失败: {str(exc)}")

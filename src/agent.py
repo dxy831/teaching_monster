@@ -52,6 +52,35 @@ from src.overview_scene import (
 )
 from src.cover_scene import generate_cover_manim_code
 
+LECTURE_LINE_MAX_WORDS = 8
+LECTURE_LINE_SPLIT_MAX_RETRIES = 2
+LECTURE_LINE_SPLIT_PROMPT = """
+You rewrite educational lecture lines for on-screen display.
+Return JSON only, with no markdown fences or extra text.
+
+Task:
+- Split each input lecture line into one or more shorter on-screen lines.
+- Preserve the original meaning and original order.
+- Keep the wording natural and readable for an educational video.
+- Each output line must contain at most {max_words} English words.
+- If an input line already has {max_words} words or fewer, keep it unchanged.
+- Split by semantic meaning, not by arbitrary fixed chunks.
+- Do not merge two different input lines together.
+- Do not drop information.
+- Do not paraphrase unless a tiny wording adjustment is needed to make the split natural.
+
+Output schema:
+{{
+  "lines": [
+    {{"source_index": 0, "parts": ["short line one", "short line two"]}},
+    {{"source_index": 1, "parts": ["another short line"]}}
+  ]
+}}
+
+Input lecture lines:
+{lecture_lines_json}
+""".strip()
+
 # Cover title heuristics
 COVER_TITLE_WORD_THRESHOLD = 6
 COVER_TITLE_FONT_SIZE = 48
@@ -528,6 +557,130 @@ Do not include quotes or extra explanation.
 
         return normalized_groups
 
+    @staticmethod
+    def _count_lecture_line_words(text: str) -> int:
+        return len(re.findall(r"\S+", (text or "").strip()))
+
+    @classmethod
+    def _validate_split_lecture_parts(cls, original_lines: List[str], split_payload: Any) -> Optional[List[List[str]]]:
+        if not isinstance(split_payload, dict):
+            return None
+        items = split_payload.get("lines")
+        if not isinstance(items, list) or len(items) != len(original_lines):
+            return None
+
+        normalized_parts_by_source: List[Optional[List[str]]] = [None] * len(original_lines)
+        for expected_index, item in enumerate(items):
+            if not isinstance(item, dict):
+                return None
+            source_index = item.get("source_index")
+            parts = item.get("parts")
+            if source_index != expected_index:
+                return None
+            if not isinstance(parts, list) or not parts:
+                return None
+
+            normalized_parts: List[str] = []
+            for part in parts:
+                if not isinstance(part, str):
+                    return None
+                normalized = " ".join(part.strip().split())
+                if not normalized:
+                    return None
+                if cls._count_lecture_line_words(normalized) > LECTURE_LINE_MAX_WORDS:
+                    return None
+                normalized_parts.append(normalized)
+
+            normalized_parts_by_source[source_index] = normalized_parts
+
+        if any(parts is None for parts in normalized_parts_by_source):
+            return None
+
+        return normalized_parts_by_source
+
+    @classmethod
+    def _fallback_split_lecture_lines(cls, lecture_lines: List[str]) -> Tuple[List[str], List[List[int]]]:
+        rewritten_lines: List[str] = []
+        source_to_new_indices: List[List[int]] = []
+        for line in lecture_lines:
+            tokens = re.findall(r"\S+", line)
+            if not tokens:
+                continue
+            new_indices: List[int] = []
+            for start in range(0, len(tokens), LECTURE_LINE_MAX_WORDS):
+                chunk = " ".join(tokens[start:start + LECTURE_LINE_MAX_WORDS]).strip()
+                if not chunk:
+                    continue
+                new_indices.append(len(rewritten_lines))
+                rewritten_lines.append(chunk)
+            source_to_new_indices.append(new_indices or [len(rewritten_lines)])
+        return rewritten_lines, source_to_new_indices
+
+    def _split_lecture_lines_with_ai(self, lecture_lines: List[str]) -> Tuple[List[str], List[List[int]]]:
+        normalized_source_lines = [" ".join(str(line).strip().split()) for line in lecture_lines if str(line).strip()]
+        if not normalized_source_lines:
+            return [], []
+
+        default_mapping = [[index] for index in range(len(normalized_source_lines))]
+        if all(self._count_lecture_line_words(line) <= LECTURE_LINE_MAX_WORDS for line in normalized_source_lines):
+            return normalized_source_lines, default_mapping
+
+        prompt = LECTURE_LINE_SPLIT_PROMPT.format(
+            max_words=LECTURE_LINE_MAX_WORDS,
+            lecture_lines_json=json.dumps(normalized_source_lines, ensure_ascii=False, indent=2),
+        )
+
+        split_groups: Optional[List[List[str]]] = None
+        for _ in range(LECTURE_LINE_SPLIT_MAX_RETRIES):
+            response = self._request_api_and_track_tokens(prompt, max_tokens=800)
+            raw_text = self._extract_response_text(response)
+            try:
+                split_payload = json.loads(extract_json_from_markdown(raw_text))
+            except Exception:
+                continue
+            split_groups = self._validate_split_lecture_parts(normalized_source_lines, split_payload)
+            if split_groups is not None:
+                break
+
+        if split_groups is None:
+            return self._fallback_split_lecture_lines(normalized_source_lines)
+
+        rewritten_lines: List[str] = []
+        source_to_new_indices: List[List[int]] = []
+        for parts in split_groups:
+            new_indices: List[int] = []
+            for part in parts:
+                new_indices.append(len(rewritten_lines))
+                rewritten_lines.append(part)
+            source_to_new_indices.append(new_indices)
+
+        return rewritten_lines, source_to_new_indices
+
+    @classmethod
+    def _remap_highlight_groups(
+        cls,
+        original_highlight_groups: List[List[int]],
+        source_to_new_indices: List[List[int]],
+    ) -> List[List[int]]:
+        remapped_groups: List[List[int]] = []
+        for group in original_highlight_groups:
+            remapped_group: List[int] = []
+            for source_index in group:
+                remapped_group.extend(source_to_new_indices[source_index])
+            remapped_groups.append(remapped_group)
+        return remapped_groups
+
+    def _prepare_section_lecture_lines(
+        self,
+        lecture_lines: List[str],
+        highlight_groups,
+    ) -> Tuple[List[str], List[List[int]]]:
+        normalized_original_lines = [" ".join(str(line).strip().split()) for line in lecture_lines if str(line).strip()]
+        normalized_groups = self._normalize_highlight_groups(normalized_original_lines, highlight_groups)
+        rewritten_lines, source_to_new_indices = self._split_lecture_lines_with_ai(normalized_original_lines)
+        remapped_groups = self._remap_highlight_groups(normalized_groups, source_to_new_indices)
+        return rewritten_lines, remapped_groups
+
     def _get_user_difficulty_preference(self) -> str:
         summary = {}
         if self.user_profile and getattr(self.user_profile, "parsed_profile", None):
@@ -808,9 +961,8 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
         # Parse into Section objects (using enhanced storyboard)
         self.sections = []
         for section_data in self.enhanced_storyboard["sections"]:
-            lecture_lines = section_data.get("lecture_lines", [])
-            highlight_groups = self._normalize_highlight_groups(
-                lecture_lines,
+            lecture_lines, highlight_groups = self._prepare_section_lecture_lines(
+                section_data.get("lecture_lines", []),
                 section_data.get("highlight_groups"),
             )
             section = Section(
@@ -1797,6 +1949,28 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
 
         return discovered
 
+    def _discover_fallback_section_videos(self) -> Dict[str, str]:
+        discovered = {}
+        ordered_sections = self.sections or []
+
+        for section in ordered_sections:
+            candidate_paths = [
+                self.output_dir / "optimized_videos" / f"{section.id}_optimized.mp4",
+                self.output_dir / "audio_remux" / f"{section.id}_with_audio.mp4",
+            ]
+
+            for candidate_path in candidate_paths:
+                candidate_path = Path(candidate_path)
+                if not candidate_path.exists() or candidate_path.stat().st_size <= 0:
+                    continue
+                if not self._is_video_file_stable(candidate_path):
+                    continue
+                if self._video_has_audio_stream(candidate_path):
+                    discovered[section.id] = str(candidate_path)
+                    break
+
+        return discovered
+
     def render_all_sections(
         self,
         max_workers: int = 12,
@@ -1849,7 +2023,7 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                                 if sid not in results:
                                     results[sid] = video_path
                                     successful_count += 1
-                            print("⏰ 已到 29 分 30 秒保底截止，停止等待剩余渲染任务")
+                            print("⏰ 已到 29 分 45 秒保底截止，停止等待剩余渲染任务")
                             break
                         timeout = min(float(section_timeout), remaining)
 
@@ -1864,7 +2038,7 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                             if sid not in results:
                                 results[sid] = video_path
                                 successful_count += 1
-                        print("⏰ 已到 29 分 30 秒保底截止，立即扫描已落盘片段并进入视频合并")
+                        print("⏰ 已到 29 分 45 秒保底截止，立即扫描已落盘片段并进入视频合并")
                         break
 
                     for future in done_futures:

@@ -117,7 +117,7 @@ def get_prompt2_storyboard(
 
     4.  **Duration Planning**:
         - Target total duration: {duration} minutes.
-        - Remember the 50% buffer rule from the outline: planned durations should sum to approximately {int(duration * 60 / 1.5)} seconds across all sections.
+        - Remember the 40% buffer rule from the outline: planned durations should sum to approximately {int(duration * 60 / 1.4)} seconds across all sections.
         - The input `outline` already provides a specific `estimated_duration` for each section.
         - You MUST strictly follow the `estimated_duration` pre-calculated in the outline when designing exactly how many and how long your animations/lecture lines will take.
         - Provide a realistic `estimated_duration` field matching the outline's intended scale, plus your detailed `lecture_lines` that can comfortably fit within it (speech averages roughly 2-3 words per second).

@@ -9,7 +9,6 @@ from .file_utils import (
     save_metadata,
     get_metadata,
 )
-from .sse import SSEManager
 
 __all__ = [
     "calculate_sha256",
@@ -17,5 +16,4 @@ __all__ = [
     "get_video_path",
     "save_metadata",
     "get_metadata",
-    "SSEManager",
 ]

@@ -131,8 +131,8 @@ def get_prompt1_outline(
     ## ⏱️ Duration & Structure Constraints (MANDATORY)
     1. **Target Video Duration**: EXACTLY {duration} minutes ({duration * 60} seconds).
     2. **Section Count**: You must plan exactly 6 to 9 sections based on the topic's complexity.
-    3. **The 50% Buffer Rule**: Actual voiceover TTS and animations will expand the planned duration by approximately 50%. 
-       - Therefore, the sum of all sections' `estimated_duration` MUST be approximately **{int((duration * 60) / 1.5)} seconds**.
+    3. **The 40% Buffer Rule**: Actual voiceover TTS and animations will expand the planned duration by approximately 40%. 
+       - Therefore, the sum of all sections' `estimated_duration` MUST be approximately **{int((duration * 60) / 1.4)} seconds**.
     4. **Duration Allocation**: You must decide the exact `estimated_duration` (in seconds) for every section. Do not just divide them equally; allocate more time for complex core concepts and examples.
 
     {profile_prompt}

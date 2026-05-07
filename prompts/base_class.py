@@ -9,8 +9,13 @@ class TeachingScene(Scene):
     RIGHT_MAX_WIDTH = 6.0
     RIGHT_MAX_HEIGHT = 5.5
 
+    def _widen_text_spacing(self, text):
+        if not isinstance(text, str):
+            return text
+        return text.replace(" ", "  ")
+
     def _build_lecture_group(self, lecture_lines):
-        lecture_texts = [Text(line, font_size=20, color="#2C1608") for line in lecture_lines]
+        lecture_texts = [Text(self._widen_text_spacing(line), font_size=20, color="#2C1608") for line in lecture_lines]
         lecture_group = VGroup(*lecture_texts).arrange(DOWN, aligned_edge=LEFT, buff=0.3)
         return lecture_group
 
@@ -19,7 +24,7 @@ class TeachingScene(Scene):
         self.camera.background_color = "#FFFDF4"  # warm ivory background
 
         # Main title - must use bold weight="BOLD", color #BE8944
-        self.title = Text(title_text, font_size=28, color="#BE8944", weight="BOLD").to_edge(UP)
+        self.title = Text(self._widen_text_spacing(title_text), font_size=28, color="#BE8944", weight="BOLD").to_edge(UP)
         self.add(self.title)
 
         # Left-side lecture content (bullets with "-")

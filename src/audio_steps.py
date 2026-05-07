@@ -242,7 +242,7 @@ def synthesize_tts_audio(
             # 仅对显式参数不兼容做 payload 级降级；鉴权/路径类错误直接抛出
             if response.status_code in (401, 403, 404):
                 raise last_error
-            if response.status_code == 400:
+            if response.status_code in (400, 500):
                 continue
 
             raise last_error

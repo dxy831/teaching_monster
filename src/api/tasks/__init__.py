@@ -1,8 +1,7 @@
 """
-Celery 任务模块
+视频生成执行模块
 """
 
-from .celery_app import celery_app
-from .video_tasks import generate_video_task
+from .video_tasks import run_video_generation
 
-__all__ = ["celery_app", "generate_video_task"]
+__all__ = ["run_video_generation"]

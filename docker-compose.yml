@@ -6,27 +6,7 @@
 # 日志: docker-compose logs -f
 # ============================================================================
 
-version: "3.8"
-
 services:
-  # ==========================================================================
-  # Redis - 消息队列 & 结果存储
-  # ==========================================================================
-  redis:
-    image: redis:7-alpine
-    container_name: knowledge2video-redis
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   # ==========================================================================
   # FastAPI - API 服务
   # ==========================================================================
@@ -38,9 +18,6 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - API_KEYS=${API_KEYS:-dev-api-key-12345}
       - DEFAULT_API=${DEFAULT_API:-claude}
       - DEBUG=${DEBUG:-false}
@@ -49,16 +26,10 @@ services:
       - VIDEO_DIR=data/outputs/videos
       - METADATA_DIR=data/outputs/metadata
     volumes:
-      # 开发模式：挂载源代码，修改后重启即可生效
       - ./src:/app/src
       - ./prompts:/app/prompts
-      # 共享输出目录（API 和 Worker 都需要访问）
       - ./data/outputs:/app/data/outputs
-      # LLM API 密钥配置文件（从宿主机挂载，可选）
       # - ./src/api_config.json:/app/src/api_config.json:ro
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -66,47 +37,3 @@ services:
       retries: 3
       start_period: 15s
     restart: unless-stopped
-
-  # ==========================================================================
-  # Celery Worker - 视频生成后台任务
-  # ==========================================================================
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: knowledge2video-worker
-    # 覆盖默认启动命令，启动 Celery Worker
-    command: >
-      python -m celery -A src.api.tasks.celery_app worker
-      --loglevel=info
-      --pool=solo
-      -Q video_generation
-      --concurrency=1
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DEFAULT_API=${DEFAULT_API:-claude}
-      - MAX_WORKERS=${MAX_WORKERS:-}
-      - OUTPUT_DIR=data/outputs
-      - VIDEO_DIR=data/outputs/videos
-      - METADATA_DIR=data/outputs/metadata
-    volumes:
-      # 开发模式：挂载源代码，修改后重启即可生效
-      - ./src:/app/src
-      - ./prompts:/app/prompts
-      # 共享输出目录（与 API 服务共享）
-      - ./data/outputs:/app/data/outputs
-      # LLM API 密钥配置文件（从宿主机挂载，可选）
-      # - ./src/api_config.json:/app/src/api_config.json:ro
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-# ============================================================================
-# 数据卷
-# ============================================================================
-volumes:
-  redis_data:
-    driver: local

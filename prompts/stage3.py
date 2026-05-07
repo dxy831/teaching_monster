@@ -285,6 +285,7 @@ def get_prompt3_code(
     ### Rule 4: Lecture text must use font_size=20
 
     **🔴 Left-side lecture text font size must be fixed at 20!**
+    **🔴 Lecture text spacing is widened automatically by the base scene. When writing `lecture_lines`, assume slightly wider rendered text and avoid packing lines too tightly.**
 
     ```python
     # ✅ Correct: Lecture text must use font_size=20
@@ -689,6 +690,7 @@ def algo(data):
 
     ### Mandatory Constraints - Fonts and Color Scheme
     **【Font Rules】** Do not explicitly set `font=` for `Text()` in generated scenes.
+    **【Spacing Rules】** The base scene automatically widens spaces in title and lecture text by replacing single spaces with double spaces. Write natural English text, but do not assume tight single-space layout when estimating line fit.
     ```python
     # ✅ Correct example
     Text("Title text", font_size=28, color="#BE8944", weight="BOLD")
@@ -829,6 +831,7 @@ def algo(data):
     6. Check if lecture text batching is split by semantics, different knowledge points cannot be mixed in same batch
     7. Check if right side has "**large graphics + right-side text annotation coexisting**" situation; if so, must delete right-side text or switch scene first then display
     8. Special check first batch lines of `self.setup_layout(..., lecture_lines)`: If contains `O(` / `log` / `²` / `₂` / `ₙ` / `^` / `=` / `≤` / `≥`, must rewrite as pure English description, and move formula to right-side `MathTex`
+    9. Check title and lecture line fit using widened spacing behavior; do not rely on single-space density when deciding wrapping or batch sizes
 """
 
 
