@@ -50,7 +50,7 @@ app = FastAPI(
 
 ### 认证方式
 
-所有接口（除健康检查外）都需要在请求头中携带 API Key:
+除健康检查与比赛接口 `/api/v1/competition/generate` 外，其他接口都需要在请求头中携带 API Key:
 
 ```
 X-API-Key: your-api-key

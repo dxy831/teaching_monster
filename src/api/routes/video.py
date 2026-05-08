@@ -124,7 +124,6 @@ async def generate_video(
 async def generate_competition_video(
     request: CompetitionGenerateRequest,
     raw_request: Request,
-    api_key: str = Depends(verify_api_key),
 ):
     """比赛制式同步视频生成接口。"""
     request_data = {
