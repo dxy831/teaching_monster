@@ -255,9 +255,8 @@ GET /api/v1/files/{filename}/metadata
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `OUTPUT_DIR` | `data/outputs` | 输出根目录 |
-| `VIDEO_DIR` | `data/outputs/videos` | 视频与字幕目录 |
-| `METADATA_DIR` | `data/outputs/metadata` | 元信息目录 |
+| `STORAGE_ROOT` | `data/outputs` | 持久化根目录，程序自动使用其下的 `videos/` 和 `metadata/` 子目录 |
+| `STORAGE_BASE_URL` | 空 | 资源访问前缀；设置后接口返回 `BASE_URL/videos/<filename>` |
 
 ### 9.3 OSS 相关
 

@@ -66,9 +66,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     API_HOST=0.0.0.0 \
     API_PORT=8080 \
-    OUTPUT_DIR=data/outputs \
-    VIDEO_DIR=data/outputs/videos \
-    METADATA_DIR=data/outputs/metadata
+    STORAGE_ROOT=data/outputs
 
 EXPOSE 8080
 

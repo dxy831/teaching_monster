@@ -17,11 +17,10 @@ class Settings:
     api_host: str = "0.0.0.0"
     api_port: int = 8080
     max_workers: Optional[int] = None
-    output_dir: str = "data/outputs"
+    storage_root: str = "data/outputs"
     video_dir: str = "data/outputs/videos"
     metadata_dir: str = "data/outputs/metadata"
     storage_base_url: str = ""
-    storage_local_root: str = ""
     oss_enabled: bool = False
     oss_endpoint: str = ""
     oss_bucket_name: str = ""
@@ -46,11 +45,10 @@ class Settings:
         if max_workers_env:
             self.max_workers = int(max_workers_env)
 
-        self.output_dir = os.getenv("OUTPUT_DIR", self.output_dir)
-        self.video_dir = os.getenv("VIDEO_DIR", os.path.join(self.output_dir, "videos"))
-        self.metadata_dir = os.getenv("METADATA_DIR", os.path.join(self.output_dir, "metadata"))
+        self.storage_root = os.getenv("STORAGE_ROOT", self.storage_root)
+        self.video_dir = os.path.join(self.storage_root, "videos")
+        self.metadata_dir = os.path.join(self.storage_root, "metadata")
         self.storage_base_url = os.getenv("STORAGE_BASE_URL", self.storage_base_url).rstrip("/")
-        self.storage_local_root = os.getenv("STORAGE_LOCAL_ROOT", self.storage_local_root or self.output_dir)
 
         self.oss_enabled = os.getenv("OSS_ENABLED", "false").lower() in ("true", "1", "yes")
         self.oss_endpoint = os.getenv("OSS_ENDPOINT", self.oss_endpoint)
@@ -64,7 +62,7 @@ class Settings:
         self._ensure_directories()
 
     def _ensure_directories(self):
-        for dir_path in [self.output_dir, self.video_dir, self.metadata_dir]:
+        for dir_path in [self.storage_root, self.video_dir, self.metadata_dir]:
             pathlib.Path(dir_path).mkdir(parents=True, exist_ok=True)
 
     def is_valid_api_key(self, api_key: str) -> bool:

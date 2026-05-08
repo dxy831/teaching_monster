@@ -22,9 +22,8 @@ services:
       - DEFAULT_API=${DEFAULT_API:-claude}
       - DEBUG=${DEBUG:-false}
       - MAX_WORKERS=${MAX_WORKERS:-}
-      - OUTPUT_DIR=data/outputs
-      - VIDEO_DIR=data/outputs/videos
-      - METADATA_DIR=data/outputs/metadata
+      - STORAGE_ROOT=data/outputs
+      - STORAGE_BASE_URL=${STORAGE_BASE_URL:-}
     volumes:
       - ./src:/app/src
       - ./prompts:/app/prompts
