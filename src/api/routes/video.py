@@ -3,6 +3,7 @@
 """
 
 import asyncio
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -30,6 +31,14 @@ async def _run_generation(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_public_file_url(request: Request, filename: str) -> str:
+    if settings.storage_base_url:
+        file_path = get_video_path(filename)
+        if file_path:
+            try:
+                relative_path = Path(file_path).resolve().relative_to(Path(settings.storage_local_root).resolve())
+            except ValueError:
+                relative_path = Path(filename)
+            return f"{settings.storage_base_url}/{relative_path.as_posix()}"
     return str(request.url_for("public_download_file", filename=filename))
 
 

@@ -20,6 +20,8 @@ class Settings:
     output_dir: str = "data/outputs"
     video_dir: str = "data/outputs/videos"
     metadata_dir: str = "data/outputs/metadata"
+    storage_base_url: str = ""
+    storage_local_root: str = ""
     oss_enabled: bool = False
     oss_endpoint: str = ""
     oss_bucket_name: str = ""
@@ -47,6 +49,8 @@ class Settings:
         self.output_dir = os.getenv("OUTPUT_DIR", self.output_dir)
         self.video_dir = os.getenv("VIDEO_DIR", os.path.join(self.output_dir, "videos"))
         self.metadata_dir = os.getenv("METADATA_DIR", os.path.join(self.output_dir, "metadata"))
+        self.storage_base_url = os.getenv("STORAGE_BASE_URL", self.storage_base_url).rstrip("/")
+        self.storage_local_root = os.getenv("STORAGE_LOCAL_ROOT", self.storage_local_root or self.output_dir)
 
         self.oss_enabled = os.getenv("OSS_ENABLED", "false").lower() in ("true", "1", "yes")
         self.oss_endpoint = os.getenv("OSS_ENDPOINT", self.oss_endpoint)
