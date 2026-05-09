@@ -1343,6 +1343,8 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
             section=section,
             output_root=self.output_dir,
             api_func=self._request_api_and_track_tokens,
+            user_profile=self.user_profile,
+            subject=self.subject,
         )
         expected_steps = len(section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines))
         is_valid, validation_error = self._validate_cached_section_steps(section_steps, expected_steps)

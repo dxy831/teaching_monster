@@ -36,12 +36,13 @@ def _get_subject_visual_strategy(subject: str, target_language: str) -> str:
 """
     else:
         return f"""
-    **Computer Science Visual Strategy (AP CS A / CS Principles):**
-    - **Code Display**: Use `self.create_code_block()` for all code. Code must be in **{target_language}** and syntactically correct.
-    - **Execution Traces**: Use `SurroundingRectangle` to highlight the current line of code. Track variable states with labeled boxes or tables.
-    - **Data Structures**: Use `Square`/`Circle` + `Text` for arrays, trees, graphs, stacks, queues. Index labels are mandatory for arrays.
-    - **State Changes**: Animate pointer movements, value swaps, and structural modifications step by step.
-    - **Complexity**: Use `MathTex` for Big-O notation and `Axes` for performance comparison charts when relevant.
+    **Computer Science Visual Strategy (Algorithm & Data Structure Topics):**
+    - **Algorithm Logic**: Use flowcharts with RoundedRectangle boxes and Arrow connections to show decision flow and process steps
+    - **Data Structures**: Use `Square`/`Circle` + `Text` for arrays, trees, graphs, stacks, queues. Index labels are mandatory for arrays. Animate with color changes and pointer arrows.
+    - **State Changes**: Animate pointer movements, value swaps, and structural modifications step by step using Transform and color highlights
+    - **Complexity**: Use `MathTex` for Big-O notation (e.g., r"O(n \\log n)") and `Axes` for performance comparison charts
+    - **Step-by-step Logic**: Use numbered Text labels with arrows to show algorithm steps in natural language (e.g., "1. Compare elements", "2. Swap if needed")
+    - **FORBIDDEN**: Code blocks, code syntax, programming language keywords, execution traces on code lines
 """
 
 
@@ -71,12 +72,7 @@ def get_prompt2_storyboard(
     profile_prompt = user_profile.get_stage2_prompt()
     target_language = user_profile.get_language()
     subject = (subject or getattr(user_profile, "subject", "computer_science") or "computer_science").strip().lower()
-    code_layout_required = subject == "computer_science"
-    subject_directive = (
-        f"Use split-left layout with a {target_language} code block for algorithm explanation."
-        if code_layout_required
-        else "Do not use code panes or code blocks; use lecture text, diagrams, formulas, labels, arrows, tables, and process animations only."
-    )
+    subject_directive = "Use left-right split layout: left side for lecture text, right side for diagrams, formulas (MathTex), labeled structures, process flows, and animations. No code blocks or programming syntax allowed."
 
     base_prompt = f"""
     **CRITICAL: All output content (titles, lecture_lines, animations) MUST be in English.**
@@ -85,6 +81,24 @@ def get_prompt2_storyboard(
 
     Subject: {subject}
     {profile_prompt}
+
+    # 🔴 Terminology Calibration (MANDATORY — Grade-Appropriate Vocabulary)
+
+    **All technical terms must match the user's grade level and background:**
+    - **Middle school (6th-8th grade)**: Use everyday language. Define every technical term on first use with a simple analogy. Avoid graduate-level jargon entirely.
+    - **High school (9th-10th grade)**: Use standard high school vocabulary. Replace advanced jargon with simpler alternatives:
+      - ❌ "marginal gain" → ✅ "extra benefit" or "additional gain"
+      - ❌ "tangent line" → ✅ "flat line at the peak" or "horizontal at the top"
+      - ❌ "kinematic formula" → ✅ "motion formula" or "equation for movement"
+      - ❌ "inference engine" → ✅ "reasoning system" or "decision-making logic"
+      - ❌ "heuristics" → ✅ "rules of thumb" or "practical shortcuts"
+    - **AP/College level**: Standard academic terminology is acceptable, but still define specialized terms on first use.
+    - **First-use rule**: When introducing a new technical term, the lecture_line must include a brief plain-English definition or analogy in the same sentence.
+
+    **Examples of grade-appropriate terminology:**
+    - Middle school: "The ball speeds up as it falls" (not "The ball experiences constant acceleration due to gravity")
+    - High school: "The ball accelerates at 9.8 m/s² downward" (not "The ball's velocity vector undergoes uniform temporal differentiation")
+    - AP/College: "The ball experiences constant gravitational acceleration g ≈ 9.8 m/s²" (technical terms OK, but define on first use)
 
     # 🔴 Factual Accuracy & Multimodal Consistency (MANDATORY — Competition Standard)
 
@@ -101,8 +115,8 @@ def get_prompt2_storyboard(
 
     1.  **Layout Strategy**:
         - {subject_directive}
-        - For computer_science sections that explain step-by-step logic, code snippets should appear throughout the relevant sections, not only at the end.
-        - For non-computer-science subjects, the left side should remain lecture-focused and the right side should use visuals only.
+        - **All subjects**: Left side displays lecture text; right side uses diagrams, formulas (MathTex), labeled structures, process flows, comparison tables, and animated visualizations
+        - **For algorithm/CS topics**: Use flowcharts, data structure animations (arrays with indices, trees with labeled nodes), and step-by-step natural language descriptions with numbered labels
 
     2.  **Abstract Concept Materialization**:
         - Use arrows, labels, tables, formulas, comparison markers, and highlighted objects to show reasoning.
@@ -118,6 +132,15 @@ def get_prompt2_storyboard(
     4.  **Duration Planning**:
         - Target total duration: {duration} minutes.
         - Remember the 40% buffer rule from the outline: planned durations should sum to approximately {int(duration * 60 / 1.4)} seconds across all sections.
+        - **Formula derivation buffer**: When a section involves step-by-step formula derivation, algebraic manipulation, or numerical calculation:
+          - Allocate 20-30% extra time compared to simple concept explanation
+          - Each derivation step should have its own lecture_line (minimum 3-4 seconds per step)
+          - Example: A 60-second concept section becomes 75-80 seconds if it includes a 3-step derivation
+        - **Math-heavy sections pacing**: For sections with multiple formulas or calculations:
+          - Setup formula: 4-5 seconds
+          - Each substitution/transformation step: 3-4 seconds
+          - Final result display: 4-5 seconds
+          - Do NOT rush through "obvious" algebraic steps — the viewer needs time to verify each step mentally
         - The input `outline` already provides a specific `estimated_duration` for each section.
         - You MUST strictly follow the `estimated_duration` pre-calculated in the outline when designing exactly how many and how long your animations/lecture lines will take.
         - Provide a realistic `estimated_duration` field matching the outline's intended scale, plus your detailed `lecture_lines` that can comfortably fit within it (speech averages roughly 2-3 words per second).
@@ -130,52 +153,13 @@ def get_prompt2_storyboard(
         - The first lecture_line of each section should activate prior knowledge (e.g., "We already know that... so what happens when...?").
         - Each section should introduce only ONE core new concept — avoid packing multiple new ideas.
         - Between sections, include a bridging sentence that connects the completed topic to the next one.
+        - **Interactive pause points (optional but recommended)**: Before revealing the solution to a worked example, consider adding a lecture_line like "Pause the video here and try it yourself" or "Can you figure out what happens next?" with the corresponding animation showing the problem setup. This activates retrieval practice and improves learning retention.
+        - **Concept-before-example rule**: Always introduce the concept definition or principle FIRST, then follow with the worked example. Never show an example before explaining what concept it demonstrates.
+        - **Motivation-before-definition rule**: Before defining a new concept, provide a 1-sentence motivation explaining WHY this concept is useful or what problem it solves. This helps the learner understand the purpose before diving into details.
 
     ## Input Outline
     {outline}
     """
-
-    cs_json_example = """
-    **✅ Correct JSON format example:**
-    ```json
-    {
-        "sections": [
-            {
-                "id": "section_0_intro",
-                "title": "Scene Introduction",
-                "estimated_duration": 45,
-                "lecture_lines": [
-                    "First narration line",
-                    "Second narration line"
-                ],
-                "highlight_groups": [[0], [1]],
-                "animations": [
-                    "Define Visual Layout: Left-Right Split.",
-                    "Visual: FadeIn title at top.",
-                    "Visual: Create scene illustration."
-                ]
-            },
-            {
-                "id": "section_1",
-                "title": "Algorithm Core Steps",
-                "estimated_duration": 60,
-                "lecture_lines": [
-                    "First, we define the algorithm function.",
-                    "Then, we enter a loop to process data.",
-                    "Inside the loop, we check if the condition is met."
-                ],
-                "highlight_groups": [[0], [1, 2]],
-                "animations": [
-                    "Define Visual Layout: Split-Left Layout for code demonstration.",
-                    "Code: def algorithm():\\n    for x in data:\\n        if x > 0: pass",
-                    "Action: Highlight code line 1 (def algorithm) while narrating first line.",
-                    "Action: Highlight code lines 2 and 3 together while narrating the second grouped step.",
-                    "Visual: Create data structure visualization."
-                ]
-            }
-        ]
-    }
-    ```"""
 
     non_cs_json_example = """
     **✅ Correct JSON format example:**
@@ -218,7 +202,7 @@ def get_prompt2_storyboard(
     }
     ```"""
 
-    json_example = cs_json_example if code_layout_required else non_cs_json_example
+    json_example = non_cs_json_example
 
     base_prompt += """
 

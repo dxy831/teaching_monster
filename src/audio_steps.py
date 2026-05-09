@@ -116,7 +116,54 @@ def expand_screen_text_to_spoken_script(
     api_func: Callable,
     max_retries: int = 3,
     max_tokens: int = 300,
+    user_profile: Optional['UserProfile'] = None,
+    subject: str = "computer_science",
 ) -> str:
+    # 根据年级获取术语简化策略
+    grade_level = "high_school"  # 默认
+    if user_profile and user_profile.parsed_profile:
+        ap_level = user_profile.parsed_profile.get("user_summary", {}).get("ap_level", "standard")
+        if ap_level == "middle_school":
+            grade_level = "middle_school"
+        elif ap_level in ["AP", "honors"]:
+            grade_level = "ap_college"
+
+    # 构建术语简化指令
+    terminology_instruction = ""
+    if grade_level == "middle_school":
+        terminology_instruction = """
+**Terminology Simplification (MANDATORY for middle school):**
+- Replace ALL technical jargon with everyday language
+- Use analogies for every technical term
+- Examples:
+  - ❌ "marginal gain" → ✅ "extra benefit"
+  - ❌ "tangent line" → ✅ "flat line at the peak"
+  - ❌ "inference engine" → ✅ "reasoning system"
+  - ❌ "lignin" → ✅ "rigid cell wall material, like a straw's walls"
+  - ❌ "heuristics" → ✅ "rules of thumb"
+  - ❌ "translocation" → ✅ "two-way transport"
+"""
+    elif grade_level == "high_school":
+        terminology_instruction = """
+**Terminology Simplification (MANDATORY for high school):**
+- Replace graduate-level jargon with high school vocabulary
+- Examples:
+  - ❌ "marginal gain" → ✅ "extra benefit" or "additional gain"
+  - ❌ "tangent line" → ✅ "flat line at the peak" or "horizontal at the top"
+  - ❌ "kinematic formula" → ✅ "motion formula" or "equation for movement"
+  - ❌ "heuristics" → ✅ "rules of thumb" or "practical shortcuts"
+  - ❌ "homoscedasticity" → ✅ "equal variance" or "consistent spread"
+  - ❌ "inference engine" → ✅ "reasoning system" or "decision-making logic"
+- Keep standard high school terms (e.g., "acceleration", "derivative" are OK)
+"""
+    else:  # ap_college
+        terminology_instruction = """
+**Terminology Guidance (AP/College level):**
+- Academic terms are acceptable, but add brief definitions on first use
+- Example: "marginal gain, which means the extra benefit from one more unit"
+- Example: "the tangent line, which is the flat line touching the curve at that point"
+"""
+
     # 概述部分使用带范例引导的特殊提示词
     if _is_overview_screen_text(screen_text):
         prompt = f"""{_OVERVIEW_EXPANSION_EXAMPLES}{screen_text}""".strip()
@@ -131,6 +178,8 @@ Task:
 - Output must be a single line of plain text only, no quotes, numbering, or explanations
 - Do not include any labels, prefixes, or metadata (like 'spoken_script:', 'output:', 'narration:', etc.)
 - Output spoken_script must be in English
+
+{terminology_instruction}
 
 Screen text:
 {screen_text}
@@ -323,6 +372,8 @@ def build_section_steps(
     api_func: Callable,
     expansion_max_retries: int = 3,
     tts_max_retries: int = 5,
+    user_profile: Optional['UserProfile'] = None,
+    subject: str = "computer_science",
 ) -> List[dict]:
     output_root = Path(output_root).resolve()
     audio_dir = reset_section_audio_dir(output_root / "audio" / section.id)
@@ -344,7 +395,10 @@ def build_section_steps(
                 expand_screen_text_to_spoken_script,
                 combined_screen_text,
                 api_func,
-                expansion_max_retries
+                expansion_max_retries,
+                300,  # max_tokens
+                user_profile,
+                subject
             ): index
             for index, (_, _, _, combined_screen_text) in enumerate(batch_expansions)
         }

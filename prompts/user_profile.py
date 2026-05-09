@@ -49,7 +49,7 @@ def get_profile_analysis_prompt(user_profile_text: str, subject: Optional[str] =
     code_display_style_hint = (
         "No code block should be required; focus on diagrams, formulas, labels, and process explanations."
         if normalized_subject in NON_CS_SUBJECTS
-        else "Use code display guidance suitable for step-by-step algorithm explanation."
+        else "No code blocks allowed; use flowcharts, data structure visualizations, and step-by-step natural language descriptions."
     )
     code_language_hint = _default_target_language(normalized_subject)
     return f"""
@@ -104,8 +104,8 @@ Please output strictly in the following JSON format without any additional text:
         "code_display_style": "{code_display_style_hint}",
         "lecture_tone": "Lecture tone style (casual and lively/professional and rigorous/patient and guiding)",
         "emphasis_points": "Content that particularly needs emphasis for this user",
-        "primary_visual_type": "Dominant Manim visual category for this subject. Physics: vector_arrows, free_body_diagrams, motion_graphs. Biology: flow_diagrams, structure_diagrams, comparison_charts. CS: code_blocks, execution_traces, data_structures. Math: coordinate_planes, function_graphs, symbolic_transformations.",
-        "avoid_visual_types": "Visual types inappropriate for this subject. E.g. physics should avoid code_blocks in explanation sections; biology should avoid code panes entirely."
+        "primary_visual_type": "Dominant Manim visual category for this subject. Physics: vector_arrows, free_body_diagrams, motion_graphs. Biology: flow_diagrams, structure_diagrams, comparison_charts. CS: flowcharts, data_structure_diagrams, algorithm_step_boxes. Math: coordinate_planes, function_graphs, symbolic_transformations.",
+        "avoid_visual_types": "Visual types inappropriate for this subject. E.g. all subjects should avoid code_blocks and code syntax displays; use diagrams and flowcharts instead."
     }},
     "stage3_code_guidance": {{
         "code_language": "{code_language_hint}",
@@ -113,8 +113,8 @@ Please output strictly in the following JSON format without any additional text:
         "variable_naming": "Variable naming style recommendation",
         "comment_density": "Comment density (high/medium/low)",
         "complexity_handling": "Complexity analysis depth (whether mathematical proof is needed)",
-        "visualization_strategy": "Primary Manim strategy: diagram_first (physics/biology — use Arrow, Axes, flow diagrams), code_trace_first (CS — use code blocks and execution traces), symbolic_algebra (math — use MathTex transformations, NumberPlane, geometric constructions)",
-        "manim_objects_priority": ["Ordered list of preferred Manim objects. Physics: Arrow, Vector, Axes, NumberPlane, MathTex. Biology: RoundedRectangle, Arrow, Circle, Text labels. CS: Code, Square, Graph, Arrow. Math: NumberPlane, FunctionGraph, MathTex, Polygon, Angle"]
+        "visualization_strategy": "Primary Manim strategy: diagram_first (physics/biology — use Arrow, Axes, flow diagrams), flowchart_first (CS — use RoundedRectangle boxes, Arrow connections, data structure visualizations with labeled nodes), symbolic_algebra (math — use MathTex transformations, NumberPlane, geometric constructions). No code blocks for any subject.",
+        "manim_objects_priority": ["Ordered list of preferred Manim objects. Physics: Arrow, Vector, Axes, NumberPlane, MathTex. Biology: RoundedRectangle, Arrow, Circle, Text labels. CS: RoundedRectangle, Square, Circle, Arrow, MathTex (for Big-O), Graph. Math: NumberPlane, FunctionGraph, MathTex, Polygon, Angle"]
     }}
 }}
 """
@@ -224,13 +224,9 @@ def get_stage3_profile_prompt(parsed_profile: Dict[str, Any]) -> str:
 - **Learning Target**: {summary.get('zpd_learning_target', 'Not specified')}
 
 ### Manim Code Generation Guidance
-- **Code Language**: {code_language}
-- **Code Style**: {guidance.get('code_style', 'Clear and readable, moderate comments')}
-- **Variable Naming**: {guidance.get('variable_naming', 'Semantic naming')}
-- **Comment Density**: {guidance.get('comment_density', 'Medium')}
-- **Complexity Analysis**: {guidance.get('complexity_handling', 'Brief explanation, no deep mathematical proof')}
-- **Visualization Strategy**: {guidance.get('visualization_strategy', 'code_trace_first')}
+- **Visualization Strategy**: {guidance.get('visualization_strategy', 'diagram_first')}
 - **Preferred Manim Objects**: {guidance.get('manim_objects_priority', [])}
+- **Code Display**: No code blocks or code syntax allowed for any subject; use flowcharts, diagrams, and data structure visualizations instead
 """
 
 
@@ -276,7 +272,7 @@ class UserProfile:
             "physics": "vector_arrows, free_body_diagrams, motion_graphs, MathTex formulas",
             "biology": "flow_diagrams, structure_diagrams, comparison_charts, labeled processes",
             "math": "coordinate_planes, function_graphs, symbolic_transformations, geometric_constructions",
-            "computer_science": "code_blocks, execution_traces, data_structures",
+            "computer_science": "flowcharts, data_structure_diagrams, algorithm_step_boxes, labeled nodes",
         }
         return types.get(self.subject, "diagrams, labels, formulas")
 
@@ -285,7 +281,7 @@ class UserProfile:
             "physics": "diagram_first",
             "biology": "diagram_first",
             "math": "symbolic_algebra",
-            "computer_science": "code_trace_first",
+            "computer_science": "flowchart_first",
         }
         return strategies.get(self.subject, "diagram_first")
 
@@ -294,7 +290,7 @@ class UserProfile:
             "physics": ["Arrow", "Vector", "Axes", "NumberPlane", "MathTex", "Dot"],
             "biology": ["RoundedRectangle", "Arrow", "Circle", "Ellipse", "Text", "MathTex"],
             "math": ["NumberPlane", "FunctionGraph", "MathTex", "Polygon", "Angle", "Axes"],
-            "computer_science": ["Code", "Square", "Graph", "Arrow", "MathTex"],
+            "computer_science": ["RoundedRectangle", "Square", "Circle", "Arrow", "MathTex", "Graph"],
         }
         return objects.get(self.subject, ["MathTex", "Arrow", "Text", "RoundedRectangle"])
 
@@ -346,11 +342,11 @@ class UserProfile:
                 "stage2_storyboard_guidance": {
                     "visual_complexity": "Moderate, with clear diagrams and visual emphasis on key relationships",
                     "animation_pace": "Medium pace, pause at key transitions and comparisons",
-                    "code_display_style": "No code block; use diagrams, formulas, tables, labels, and process animation only",
+                    "code_display_style": "No code blocks allowed; use flowcharts, data structure diagrams, and step-by-step natural language descriptions",
                     "lecture_tone": "Clear, encouraging, and concept-focused",
                     "emphasis_points": "Core concepts, causal relationships, and representative examples",
                     "primary_visual_type": self._default_primary_visual_type(),
-                    "avoid_visual_types": "code_blocks, execution_traces"
+                    "avoid_visual_types": "code_blocks, code syntax, execution traces on code lines"
                 },
                 "stage3_code_guidance": {
                     "code_language": "Not applicable",
@@ -368,7 +364,7 @@ class UserProfile:
                 "age_group": "College/Graduate student",
                 "background": "Some programming foundation",
                 "learning_goal": "Learn algorithms and data structures",
-                "target_language": "Python",
+                "target_language": "Not applicable",
                 "difficulty_preference": "advanced",
                 "ap_level": "AP",
                 "zpd_prior_knowledge": "Understands basic programming, loops, conditionals, and simple data types",
@@ -387,20 +383,20 @@ class UserProfile:
             "stage2_storyboard_guidance": {
                 "visual_complexity": "Moderate, detailed display of key steps",
                 "animation_pace": "Medium pace, pause and explain at key steps",
-                "code_display_style": "Include necessary comments, show standard implementation",
+                "code_display_style": "No code blocks allowed; use flowcharts, data structure visualizations, and step-by-step natural language descriptions",
                 "lecture_tone": "Professional but understandable",
                 "emphasis_points": "Core algorithm ideas and implementation techniques",
-                "primary_visual_type": "code_blocks, execution_traces, data_structures",
-                "avoid_visual_types": "None"
+                "primary_visual_type": "flowcharts, data_structure_diagrams, algorithm_step_boxes",
+                "avoid_visual_types": "code_blocks, code syntax"
             },
             "stage3_code_guidance": {
-                "code_language": "Python",
-                "code_style": "Pythonic style, clear and readable",
-                "variable_naming": "Semantic naming, follow PEP8",
-                "comment_density": "Medium, comments at key steps",
-                "complexity_handling": "Brief explanation of time and space complexity",
-                "visualization_strategy": "code_trace_first",
-                "manim_objects_priority": ["Code", "Square", "Graph", "Arrow", "MathTex"]
+                "code_language": "Not applicable",
+                "code_style": "Use flowcharts and data structure visualizations instead of code",
+                "variable_naming": "Semantic naming for diagram elements",
+                "comment_density": "Low",
+                "complexity_handling": "Brief explanation of time and space complexity using Big-O notation in MathTex",
+                "visualization_strategy": "flowchart_first",
+                "manim_objects_priority": ["RoundedRectangle", "Square", "Circle", "Arrow", "MathTex", "Graph"]
             }
         }
     

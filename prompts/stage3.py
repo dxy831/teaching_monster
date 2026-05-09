@@ -51,20 +51,24 @@ def get_prompt3_code(
         - Very short pauses allowed between narrations: `self.wait(0.2)` to `self.wait(0.8)`
         - Before section ending, allowed: `self.wait(1)` to `self.wait(2)`
     - **⚠️ Must Strictly Follow**: Narration timeline uses `audio_duration` as the only ground truth, never compress it yourself!
+    - **🧠 Cognitive pause for complex content** (use the remaining buffer time wisely):
+        - **After displaying a formula setup**: `self.wait(0.8)` — let viewer read the formula
+        - **Between algebraic transformation steps**: `self.wait(0.5)` — let viewer verify the step
+        - **After showing a calculation result**: `self.wait(1.0)` — let viewer comprehend the answer
+        - **After displaying a complex diagram**: `self.wait(1.0)` — let viewer scan all labels
+        - **Example flow**: Setup formula → wait(0.8) → Substitute values → wait(0.5) → Calculate → wait(0.5) → Show result → wait(1.0)
+        - These pauses should come from the {max(0, estimated_duration - total_audio_duration):.2f} seconds buffer, NOT from narration time
 """
 
-    subject_prompt = """
-    - Use `self.create_code_block()` for code displays.
-    - It is acceptable to show runnable source code and code-line highlighting where useful.
-    - **Visualization Strategy: code_trace_first** — Prioritize code blocks with execution traces. Use SurroundingRectangle to highlight current code lines. Track variable states with labeled boxes.
-""" if subject == "computer_science" else f"""
-    - Strictly forbidden to generate `self.create_code_block(`, `Code(`, or any code-pane layout.
+    subject_prompt = f"""
+    - Strictly forbidden to generate `self.create_code_block(`, `Code(`, or any code-pane layout for ANY subject.
     - Use diagrams, formulas, labels, arrows, tables, flow/process visuals, and highlighted objects only.
-    - The final scene should still be a normal `TeachingScene` with `setup_layout()` and `play_synced_step()`, but without any code display objects.
-    - **Visualization Strategy: {"symbolic_algebra" if subject == "math" else "diagram_first"}**
+    - The final scene should be a normal `TeachingScene` with `setup_layout()` and `play_synced_step()`, but without any code display objects.
+    - **Visualization Strategy: {"symbolic_algebra" if subject == "math" else "flowchart_first" if subject == "computer_science" else "diagram_first"}**
     {"- Prioritize MathTex symbolic transformations, NumberPlane/Axes with FunctionGraph, geometric constructions (Polygon, Arc, Angle). Show algebraic derivation steps sequentially." if subject == "math" else ""}
     {"- Prioritize Arrow (force vectors with labeled magnitudes), Axes/NumberPlane (motion graphs), Dot + Arrow (free-body diagrams), MathTex (formulas with units). Every physical quantity must include its unit on screen." if subject == "physics" else ""}
     {"- Prioritize RoundedRectangle + Text labels (structures), Arrow chains (processes), side-by-side VGroup columns (comparisons). Animate processes chronologically. Every technical term must have a labeled Text object on first use." if subject == "biology" else ""}
+    {"- Prioritize flowcharts with RoundedRectangle boxes and Arrow connections (algorithm logic), Square/Circle + Text (data structures with labeled nodes), numbered Text labels with arrows (step-by-step logic), MathTex (Big-O notation), Axes (performance charts). Show state changes with color highlights and pointer arrows." if subject == "computer_science" else ""}
 """
 
     zpd_pacing_prompt = """
@@ -208,33 +212,14 @@ def get_prompt3_code(
 
     **If you must display formulas, put them in the right-side animation area using `MathTex`, don't write them into `setup_layout()`'s lecture_lines.**
 
-    ### Rule 2: Code blocks must use self.create_code_block() when code display is allowed
-
-    **🔴 Strictly forbidden to manually create Code objects. If the subject requires code display, you must use the `self.create_code_block()` method provided by the base class.**
-
-    ```python
-    # ✅ Correct: Use self.create_code_block() to create code blocks
-    code_obj = self.create_code_block(code_text, language="{target_language.lower()}")
-    code_obj.to_edge(DOWN, buff=0.3).to_edge(LEFT, buff=0.3)
-
-    # ❌ Wrong: Manually creating Code object (easy to miss parameters causing dark background)
-    Code(code_string=code_text, language="python")  # ❌ Will have dark background
-    ```
-
-    **`create_code_block()` has built-in correct configuration:**
-    - `formatter_style="tango"` - tango syntax highlighting theme
-    - `background="rectangle"` - rectangular background
-    - `background_config` - light gold background + gold border
-
-    ### Rule 3: Element position boundary restrictions (Strictly forbidden to go off-screen!)
+    ### Rule 2: Element position boundary restrictions (Strictly forbidden to go off-screen!)
 
     **Screen safe area (Manim coordinate system):**
     - **X-axis range**: [-7.0, 7.0] (left-right boundaries)
     - **Y-axis range**: [-4.0, 4.0] (top-bottom boundaries)
 
-    **Left area (code + lecture notes):**
+    **Left area (lecture notes):**
     - X ∈ [-7.0, 0]
-    - Code block: `to_edge(DOWN, buff=0.3).to_edge(LEFT, buff=0.3)`
     - Lecture text: `to_edge(LEFT, buff=0.3)`, height limit 2.5
 
     **Right area (animation demonstration):**
@@ -357,12 +342,11 @@ def get_prompt3_code(
     Don't hardcode specific shapes, but choose the most appropriate Manim objects based on algorithm logic.
 
     ### 1. Dynamic Layout System
-    **【Important】Left-side three-layer vertical layout, strictly forbidden to overlap:**
+    **【Important】Left-side two-layer vertical layout, strictly forbidden to overlap:**
     ```python
     # Left-side vertical layout (top to bottom):
     # Layer 1: Title title -> to_edge(UP, buff=0.2)
-    # Layer 2: Lecture text lecture -> Below title, height limit 2.5 units
-    # Layer 3: Code code_obj -> to_edge(DOWN, buff=0.2), height limit 3.5 units
+    # Layer 2: Lecture text lecture -> Below title, height limit 3.5 units
     # Left area: X ∈ [-7.0, 0], Right area: X ∈ [0.3, 6.5]
 
     # === Layout Template ===
@@ -372,21 +356,10 @@ def get_prompt3_code(
     # ⚠️ Lecture text starts from top-left corner, strictly forbidden to center on Y-axis
     self.lecture.next_to(title, DOWN, buff=1.0).to_edge(LEFT, buff=0.3)
 
-    if self.lecture.height > 2.5:
-        self.lecture.scale_to_fit_height(2.5)
+    if self.lecture.height > 3.5:
+        self.lecture.scale_to_fit_height(3.5)
     if self.lecture.width > LEFT_MAX_WIDTH:
         self.lecture.scale_to_fit_width(LEFT_MAX_WIDTH)
-
-    code_obj.to_edge(DOWN, buff=0.2).to_edge(LEFT, buff=0.3)
-    if code_obj.height > 3.5:
-        code_obj.scale_to_fit_height(3.5)
-    if code_obj.width > LEFT_MAX_WIDTH:
-        code_obj.scale_to_fit_width(LEFT_MAX_WIDTH)
-
-    # Ensure lecture and code don't overlap
-    if self.lecture.get_bottom()[1] < code_obj.get_top()[1] + 0.3:
-        code_obj.scale(0.85)
-        code_obj.to_edge(DOWN, buff=0.3)
     ```
 
      **【⚠️ Lecture text batch display - Hard rules】**
@@ -394,20 +367,16 @@ def get_prompt3_code(
 
      ### 🔴🔴🔴 Batching Core Rules (Most error-prone! Must strictly follow!) 🔴🔴🔴
 
-     **AI's most common mistake: Mechanically using 4 lines per batch regardless of whether there's a code block. This is wrong!**
+     **All sections use max 8 lines per batch** (pure lecture + right-side animation)
 
      **Execution order (must execute in order, cannot skip steps):**
-     1. **First determine if current section has a code block**
-         - **Has code block** (bottom-left has `create_code_block`) → Max **4 lines** per batch
-         - **No code block** (pure lecture + right-side animation, such as thought analysis, problem interpretation, summary, etc.) → Max **8 lines** per batch
-         - **🔴 Most thought analysis sections have no code block, should use 8-line limit, not 4 lines!**
-     2. **Then batch by semantic completeness (more important than line limit!):**
+     1. **Batch by semantic completeness (more important than line limit!):**
          - **Same knowledge point can span multiple batches** (recommended 2-4 batches, adaptive by duration), but cannot mix with next knowledge point in same batch
          - **Different knowledge points cannot be forced into same batch**
          - If a knowledge point has only 2 lines, just display 2 lines; if it has 6 lines, display 6 lines
-         - **Strictly forbidden to mechanically fill every batch to 4 lines!**
+         - **Strictly forbidden to mechanically fill every batch to 8 lines!**
          - **Special emphasis: Must batch by semantic completeness, cannot template-split by fixed line count.**
-     3. **Finally check if exceeding the scene limit (4 or 8 lines)**
+     2. **Finally check if exceeding the scene limit (8 lines)**
          - If not exceeded: Keep knowledge point complete, no extra splitting
          - If exceeded: Only split within that knowledge point by natural semantic breakpoints, **forbidden to cross knowledge points to pad line count**
 
@@ -434,46 +403,9 @@ def get_prompt3_code(
         obj.shift(UP * (RIGHT_BOTTOM_Y - obj.get_bottom()[1] + 0.2))
     ```
 
-    **【🚨🚨🚨 Code Display - Must use self.create_code_block() when code is required 🚨🚨🚨】**
-
-    ⚠️ **If the lesson includes code, strictly forbidden to use Text() to display code; you must use the base class's `self.create_code_block()` method. For non-computer-science subjects, do not display code at all.**
-
-    ```python
-    # ✅✅✅ The only correct way ✅✅✅
-    code_text = \"\"\"# {target_language} example
-def algo(data):
-    # Core logic
-    pass\"\"\"
-    code_obj = self.create_code_block(code_text, language="{target_language.lower()}")
-    code_obj.to_edge(DOWN, buff=0.3).to_edge(LEFT, buff=0.3)
-    self.play(Create(code_obj))
-
-    # ❌ Wrong: Manually creating Code object
-    Code(code_string=code_text, language="python")  # ❌ Easy to miss parameters
-    ```
-
-    **`create_code_block()` has built-in correct configuration:**
-    - `formatter_style="tango"` - tango syntax highlighting
-    - `background="rectangle"` - rectangular background
-    - `background_config` - light gold background #fff7e8 + gold border #e4c8a6
-
-    **【Code Comment Rules - Must use English】**
-    - **All code comments must use English** for audience understanding
-
-    **【Code Highlight Box Precise Positioning】Use code_obj[2] to access code line VGroup:**
-    ```python
-    code_lines = code_obj[2]
-    highlight = SurroundingRectangle(code_lines[0], color=YELLOW, buff=0.05)
-    self.play(Create(highlight))
-
-    # ✅ Move highlight box (use Transform)
-    new_highlight = SurroundingRectangle(code_lines[2], color=YELLOW, buff=0.05)
-    self.play(Transform(highlight, new_highlight))
-    ```
-
     ### 2. Interaction and Logic Expression
-    - **Code highlighting**: Use `SurroundingRectangle` for precise framing, forbidden to use `Indicate` to highlight code blocks.
-    - **No Orphan Narrations**: Every time a line is spoken, there MUST be a corresponding visual change or highlight on the right side if the narration refers to code or a diagram.
+    - **Visual highlighting**: Use `SurroundingRectangle` for precise framing of diagrams, formulas, or data structures.
+    - **No Orphan Narrations**: Every time a line is spoken, there MUST be a corresponding visual change or highlight on the right side if the narration refers to a diagram or visual element.
     - **Breathing timing**: After text highlighting ends, must `self.wait(0.5)`, first top-left text → pause → then right-side animation.
     - **Logic externalization**: Conditional judgment displays `MathTex("5 > 3")`, turns green if true/red if false.
     - **Recursion**: Maintain Stack VGroup in screen corner, add rectangle for each recursion level, remove on return
@@ -482,7 +414,7 @@ def algo(data):
 
     **Every sentence of lecture text must be completed through `play_synced_step()`:**
     - When audio starts playing, corresponding sentence starts highlighting.
-    - **Visual Sync Requirement**: Any right-side highlighting (e.g., `SurroundingRectangle` on code or diagrams) MUST be passed into `play_synced_step` alongside the audio.
+    - **Visual Sync Requirement**: Any right-side highlighting (e.g., `SurroundingRectangle` on diagrams or data structures) MUST be passed into `play_synced_step` alongside the audio.
     - **Group Highlighting**: If a speaker narrates multiple lecture lines in one sentence, those lecture lines must be placed into the same `highlight_indices` group and passed together to `play_synced_step(...)`.
     - `highlight_indices` across all steps must cover every currently displayed lecture line exactly once for that batch, with no missing indices and no duplicates.
     - Highlighting lasts for entire `audio_duration`.
@@ -495,7 +427,7 @@ def algo(data):
         steps[1]["highlight_indices"],
         steps[1]["audio_path"],
         steps[1]["audio_duration"],
-        Transform(highlight, SurroundingRectangle(code_lines[1], color=YELLOW))
+        Transform(highlight, SurroundingRectangle(diagram_element, color=YELLOW))
     )
     ```
 
@@ -541,7 +473,7 @@ def algo(data):
     ### Code Specifications
     - Inherit `TeachingScene`, define variables before use
     - Pacing: `self.wait(1)` gives audience thinking time
-    {f'- Code language: **{target_language}**' if subject == 'computer_science' else '- No code blocks or code displays allowed for this subject'}
+    - No code blocks or code displays allowed for any subject
 
     ### Reference Code Structure
     ```python
@@ -551,7 +483,7 @@ def algo(data):
     class {section.id.title().replace('_', '')}Scene(TeachingScene):
         def construct(self):
             steps = {section_steps}
-            current_batch = steps[:4]
+            current_batch = steps[:8]
             screen_texts = [step["screen_text"] for step in current_batch]
             current_batch_indices = []
             for step in current_batch:
@@ -559,85 +491,20 @@ def algo(data):
 
             # 🔴🔴🔴 First line must call setup_layout()! Set background color and basic layout 🔴🔴🔴
             self.setup_layout("{section.title}", screen_texts, lecture_line_indices=current_batch_indices)
-""" + (f"""
-            # 1. Create code block - 🔴 Must use self.create_code_block()!
-            code_raw = \"\"\"# {target_language} example
-def algo(data):
-    # Core logic
-    pass\"\"\"
-            code = self.create_code_block(code_raw, language="{target_language.lower()}")
-            code.to_edge(DOWN, buff=0.3).to_edge(LEFT, buff=0.3)
 
-            # 2. Data Structures
-            array_group = VGroup(*[Square() for _ in range(5)]).arrange(RIGHT)
-
-            # 3. Checkmark and cross marks - 🔴 Must use MathTex, strictly forbidden to use Text!
-            correct_mark = MathTex(r"\\checkmark", color="#478211").scale(1.2)  # Green checkmark ✓
-            wrong_mark = MathTex(r"\\times", color="#C84A2B").scale(1.2)        # Red cross ✗
-
-            # 🔴 Narration must use play_synced_step, based on actual audio duration
-            self.play_synced_step(
-                steps[0]["highlight_indices"],
-                steps[0]["audio_path"],
-                steps[0]["audio_duration"],
-                Create(code)
-            )
-
-            self.play_synced_step(
-                steps[1]["highlight_indices"],
-                steps[1]["audio_path"],
-                steps[1]["audio_duration"],
-                Create(array_group)
-            )
-
-            # 4. Execution Trace
-            code_lines = code[2]
-            highlight = SurroundingRectangle(code_lines[0], color=YELLOW, buff=0.05)
-            self.play_synced_step(
-                steps[2]["highlight_indices"],
-                steps[2]["audio_path"],
-                steps[2]["audio_duration"],
-                Create(highlight)
-            )
-
-            # Move highlight
-            new_hl = SurroundingRectangle(code_lines[1], color=YELLOW, buff=0.05)
-            self.play_synced_step(
-                steps[3]["highlight_indices"],
-                steps[3]["audio_path"],
-                steps[3]["audio_duration"],
-                Transform(highlight, new_hl)
-            )
-
-            # If narration exceeds current batch, must switch left-side lecture text first, then continue highlighting
-            if len(steps) > 4:
-                next_batch = steps[4:8]
-                next_batch_indices = []
-                for step in next_batch:
-                    next_batch_indices.extend(step["highlight_indices"])
-                self.replace_lecture_lines(
-                    [step["screen_text"] for step in next_batch],
-                    lecture_line_indices=next_batch_indices,
-                )
-                self.play_synced_step(
-                    next_batch[0]["highlight_indices"],
-                    next_batch[0]["audio_path"],
-                    next_batch[0]["audio_duration"]
-                )
-""" if subject == 'computer_science' else """
-            # 1. Diagrams and visual elements (NO code blocks for non-CS subjects)
+            # 1. Diagrams and visual elements (NO code blocks for any subject)
             # Use MathTex for formulas, Text for labels, Arrow/Line for relationships
-            formula = MathTex(r"C_6H_{{12}}O_6 + 6O_2 \\\\to 6CO_2 + 6H_2O", color="#9B6D0B").scale(0.7)
+            formula = MathTex(r"F = ma", color="#9B6D0B").scale(0.7)
             formula.move_to([3.5, 2.0, 0])
 
             # 2. Labeled diagram with shapes
             box1 = RoundedRectangle(width=2, height=0.8, corner_radius=0.1, color="#e4c8a6", fill_color="#fff7e8", fill_opacity=1)
-            label1 = Text("Glucose", font_size=20, color="#2C1608")
+            label1 = Text("Input", font_size=20, color="#2C1608")
             label1.move_to(box1)
             step_group = VGroup(box1, label1).move_to([2.0, 0.5, 0])
 
             box2 = RoundedRectangle(width=2, height=0.8, corner_radius=0.1, color="#c7e7aa", fill_color="#effce3", fill_opacity=1)
-            label2 = Text("Pyruvate", font_size=20, color="#2C1608")
+            label2 = Text("Output", font_size=20, color="#2C1608")
             label2.move_to(box2)
             result_group = VGroup(box2, label2).move_to([5.0, 0.5, 0])
 
@@ -670,8 +537,8 @@ def algo(data):
             )
 
             # If narration exceeds current batch, must switch left-side lecture text first
-            if len(steps) > 4:
-                next_batch = steps[4:8]
+            if len(steps) > 8:
+                next_batch = steps[8:16]
                 next_batch_indices = []
                 for step in next_batch:
                     next_batch_indices.extend(step["highlight_indices"])
@@ -684,7 +551,6 @@ def algo(data):
                     next_batch[0]["audio_path"],
                     next_batch[0]["audio_duration"]
                 )
-""") + f"""
             self.wait(2)
     ```
 
@@ -741,6 +607,25 @@ def algo(data):
     | Tip/info | #1A7F99 | #ecf6fa | #bde0ee | - |
     | Success/correct | #478211 | #effce3 | #c7e7aa | - |
     | Code block | - | #fff7e8 | #e4c8a6 | **Must use tango + background_config** |
+
+    **🔴 Forbidden low-contrast colors on cream background (#FFFDF4):**
+
+    The following colors have insufficient contrast and will be hard to read:
+    - ❌ **Light beige/tan**: #F5E6D3, #E8D7C3, #D4C5B0 — too close to background, text will be nearly invisible
+    - ❌ **Light yellow**: #FFFFE0, #FFFACD, #FFF8DC — insufficient contrast for small text
+    - ❌ **Pale purple/lavender**: #E6E6FA, #D8BFD8 (especially in font_size < 20) — hard to read
+    - ❌ **Light gray**: #D3D3D3, #C0C0C0 — low contrast, avoid for text
+
+    **✅ Minimum contrast requirements:**
+    - **Small text (font_size < 20)**: Use dark colors only (#2C1608, #9B6D0B, #C84A2B, #478211, #1A7F99)
+    - **Medium text (font_size 20-24)**: Can use medium colors (#BE8944, #C35101)
+    - **Large labels (font_size ≥ 28)**: Most colors acceptable except the forbidden list above
+    - **Rule of thumb**: If you're unsure, use #2C1608 (dark brown) — it always works
+
+    **Self-check before using a color:**
+    1. Is this color in the forbidden list above? → Choose a darker alternative
+    2. Is this for small text (< 20)? → Use only dark colors from the approved palette
+    3. When in doubt → Use #2C1608 (normal text color)
 
     **【Color Scheme Principles】**
     - Each scene max 3-4 emphasis colors, ensure overall harmony
@@ -810,14 +695,15 @@ def algo(data):
     | `Text("O(` | Math symbol boxes | Split into VGroup of Text + MathTex |
     | `Text("log` | Math symbol boxes | Split into VGroup of Text + MathTex |
     | `Text(".*log₂.*")` | Subscript rendering unstable/boxes | Split into Text + `MathTex(r"\\\\log_2 n")` |
-    | `Code(code_string=` | Style error | `self.create_code_block(` |
+    | `self.create_code_block(` | ❌ Code blocks forbidden for all subjects! | Use flowcharts, diagrams, data structure visualizations |
+    | `Code(code_string=` | ❌ Code blocks forbidden for all subjects! | Use flowcharts, diagrams, data structure visualizations |
     | `self.add_to_right(` | ❌ This method has been deleted! | Manual `move_to` + boundary check + `self.play(FadeIn(...))` |
     | `self.remove_from_right(` | ❌ This method has been deleted! | `self.play(FadeOut(...))` + `self.remove(...)` |
     | `self.clear_right_area(` | ❌ This method has been deleted! | Individual `FadeOut` + `self.remove()` |
     | `# Use Text instead of MathTex` | ❌ Strictly forbidden to replace! Environment has configured LaTeX | Keep MathTex, fix LaTeX syntax |
     | `# Avoid LaTeX` | ❌ Strictly forbidden to use this as excuse | Keep MathTex, environment has no LaTeX issues |
 
-    **🔴🔴🔴 Strictly forbidden to use `self.add_to_right()` — This method does not exist! 🔴🔴🔴**
+    **🔴🔴🔴 Strictly forbidden to use code blocks — No code display for any subject! 🔴🔴🔴**
     Base class `TeachingScene` does not have `add_to_right`, `remove_from_right`, `clear_right_area` methods.
     If these calls appear in your code, runtime will directly crash with `AttributeError`!
     Correct approach: Manual `move_to()` positioning → check boundaries → `self.play(FadeIn(obj))` to add.
@@ -832,6 +718,12 @@ def algo(data):
     7. Check if right side has "**large graphics + right-side text annotation coexisting**" situation; if so, must delete right-side text or switch scene first then display
     8. Special check first batch lines of `self.setup_layout(..., lecture_lines)`: If contains `O(` / `log` / `²` / `₂` / `ₙ` / `^` / `=` / `≤` / `≥`, must rewrite as pure English description, and move formula to right-side `MathTex`
     9. Check title and lecture line fit using widened spacing behavior; do not rely on single-space density when deciding wrapping or batch sizes
+    10. **🆕 Numerical consistency check**: If your code displays the same calculation in multiple places (e.g., in narration, in a MathTex formula, in a summary box):
+        - Verify all instances show the EXACT same numbers and operations
+        - Example: If step 3 calculates "1.2 × 240 = 288", then step 5's summary MUST also show "1.2 × 240 = 288", NOT "1.2 × 80" or any other variant
+        - Search your code for all `MathTex(r".*\d+.*")` and `Text(".*\d+.*")` that display numerical results
+        - Cross-check: Do the numbers match the calculation steps? Are the operators consistent?
+        - Common error: Copy-pasting a formula box but forgetting to update the numbers inside
 """
 
 
@@ -867,8 +759,7 @@ def get_regenerate_note(attempt, MAX_REGENERATE_TRIES, error_message: str = None
 - [ ] Are all original lecture texts preserved?
 - [ ] Are all original animation steps preserved?
 - [ ] Is total duration of wait() calls similar to original?
-- [ ] Is data structure visualization (arrays, pointers, highlights, etc.) complete?
-- [ ] Are code blocks and code highlighting preserved?
+- [ ] Is data structure visualization (arrays, pointers, highlights, diagrams, etc.) complete?
 
 **3. Correct ways to fix common errors:**
 | Error Type | ✅ Correct Approach | ❌ Wrong Approach |
@@ -894,8 +785,8 @@ def get_regenerate_note(attempt, MAX_REGENERATE_TRIES, error_message: str = None
 **5. Absolutely forbidden behaviors:**
 - ❌ Delete entire animation demonstration part, only keep title and lecture text
 - ❌ Shorten 30-second video to 5 seconds
-- ❌ Delete code block display
 - ❌ Delete data structure visualization
+- ❌ Use code blocks or code displays for any subject
 """
 
     else:

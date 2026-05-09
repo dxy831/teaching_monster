@@ -182,9 +182,11 @@ def get_prompt1_outline(
     3.  **Variable / Concept Tracking List**:
         - List the core concepts, variables, structures, or quantities that the video needs to track visually.
 
-    4.  **Discipline Constraints**:
-        - For computer_science, all code must be written in **{target_language}**.
-        - For non-computer-science subjects, do not require code snippets or programming-language-centered explanation.
+    4.  **Visual Content Constraints**:
+        - **All subjects (including computer science)**: Use diagrams, formulas (MathTex), labeled structures, process flows, comparison tables, and worked examples
+        - **Strictly forbidden for all subjects**: Programming code snippets, code blocks, algorithm pseudocode, or any programming-language syntax
+        - **For algorithm/CS topics**: Use high-level flowcharts, data structure visualizations (arrays, trees, graphs with labeled nodes), and step-by-step natural language descriptions
+        - **Visual toolkit**: Arrow (relationships), MathTex (formulas/logic), RoundedRectangle + Text (labeled boxes), NumberPlane/Axes (graphs), VGroup (structured layouts)
 
     5.  **ZPD (Zone of Proximal Development) Section-Level Requirements**:
         - Each section MUST start by activating prior knowledge (connect to what the learner already knows).
@@ -195,8 +197,8 @@ def get_prompt1_outline(
     6.  **Ending Structure Requirements (Strict Ending Structure)**:
         - Second-to-last section: summary and key review only.
         - Last section:
-          - For computer_science: complete runnable **{target_language}** source code.
-          - For non-computer-science subjects: final recap sheet with formulas, key terms, or process map only.
+          - **All subjects**: Final recap sheet with key formulas, core concepts summary, process map, or decision flowchart
+          - **No code allowed**: Even for CS topics, use conceptual summary instead of source code
 
     # Output Format (JSON)
 
@@ -226,13 +228,13 @@ def get_prompt1_outline(
                 "id": "section_0_intro",
                 "title": "Scene Introduction",
                 "content": "Real-life or classroom introduction that motivates the topic.",
-                "estimated_duration": 30{f',{chr(10)}                "code_mapping": "None"' if subject == 'computer_science' else ''}
+                "estimated_duration": 30
             }},
             {{
                 "id": "section_1",
                 "title": "Core Concept",
                 "content": "Introduce the main concept and key mechanism.",
-                "estimated_duration": 45{f',{chr(10)}                "code_mapping": "Describe which code segment this section maps to"' if subject == 'computer_science' else ''}
+                "estimated_duration": 45
             }}
         ]
     }}
