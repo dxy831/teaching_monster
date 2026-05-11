@@ -27,6 +27,10 @@ DEFAULT_TTS_VOICE = "alloy"
 LLM_EXPANSION_MAX_WORKERS = int(os.getenv("LLM_EXPANSION_MAX_WORKERS", "8"))
 TTS_SYNTHESIS_MAX_WORKERS = int(os.getenv("TTS_SYNTHESIS_MAX_WORKERS", "8"))
 
+# TTS模型负载均衡配置
+TTS_MODELS = ["tts-1-hd", "tts-1-hd-1106"]
+TTS_MODEL_MAX_WORKERS = 4  # 每个模型的最大并发数
+
 
 def extract_response_text(response) -> str:
     try:
@@ -217,7 +221,7 @@ Screen text:
 def get_tts_endpoint_config() -> tuple[str, str, str, str]:
     api_key = os.getenv("TTS_API_KEY") or os.getenv("OPENAI_API_KEY") or cfg("gpt5", "api_key")
     base_url = os.getenv("TTS_BASE_URL") or cfg("gpt5", "base_url") or DEFAULT_TTS_BASE_URL
-    model = os.getenv("TTS_MODEL") or DEFAULT_TTS_MODEL
+    # 不再从环境变量读取model，而是在synthesize_tts_audio中动态选择
     voice = os.getenv("TTS_VOICE") or DEFAULT_TTS_VOICE
 
     if not api_key:
@@ -225,7 +229,7 @@ def get_tts_endpoint_config() -> tuple[str, str, str, str]:
     if not base_url:
         raise ValueError("Missing TTS base URL. Set TTS_BASE_URL or configure gpt5.base_url.")
 
-    return api_key, base_url.rstrip("/"), model, voice
+    return api_key, base_url.rstrip("/"), voice
 
 
 def synthesize_tts_audio(
@@ -233,10 +237,13 @@ def synthesize_tts_audio(
     output_path: Path,
     max_retries: int = 5,
     timeout: int = 120,
+    model_index: int = 0,  # 新增：用于选择TTS模型
 ) -> Path:
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    api_key, base_url, model, voice = get_tts_endpoint_config()
+    api_key, base_url, voice = get_tts_endpoint_config()
+    # 根据model_index选择模型
+    model = TTS_MODELS[model_index % len(TTS_MODELS)]
     endpoint = f"{base_url}/audio/speech"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -410,21 +417,56 @@ def build_section_steps(
             index = future_to_index[future]
             spoken_scripts[index] = future.result()
 
-    # 并行生成 TTS 音频（可通过环境变量 TTS_SYNTHESIS_MAX_WORKERS 调整）
+    # 并行生成 TTS 音频 - 使用两个模型负载均衡，每个模型4个并发
     audio_results = [None] * len(batch_expansions)
-    with ThreadPoolExecutor(max_workers=TTS_SYNTHESIS_MAX_WORKERS) as executor:
-        future_to_index = {
-            executor.submit(
-                synthesize_tts_audio,
-                spoken_script,
-                audio_dir / f"step_{index:02d}.wav",
-                tts_max_retries
-            ): index
-            for index, spoken_script in enumerate(spoken_scripts)
-        }
-        for future in as_completed(future_to_index):
-            index = future_to_index[future]
-            audio_results[index] = future.result()
+
+    # 将任务分配给两个模型
+    model_0_tasks = []  # tts-1-hd
+    model_1_tasks = []  # tts-1-hd-1106
+
+    for index, spoken_script in enumerate(spoken_scripts):
+        task = (index, spoken_script, audio_dir / f"step_{index:02d}.wav", tts_max_retries)
+        if index % 2 == 0:
+            model_0_tasks.append(task)
+        else:
+            model_1_tasks.append(task)
+
+    # 为每个模型创建独立的线程池，各自4个并发
+    from concurrent.futures import ThreadPoolExecutor as TPE
+
+    def process_model_tasks(tasks, model_index):
+        results = {}
+        with TPE(max_workers=TTS_MODEL_MAX_WORKERS) as executor:
+            future_to_index = {
+                executor.submit(
+                    synthesize_tts_audio,
+                    spoken_script,
+                    output_path,
+                    max_retries,
+                    120,  # timeout
+                    model_index
+                ): idx
+                for idx, spoken_script, output_path, max_retries in tasks
+            }
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                results[idx] = future.result()
+        return results
+
+    # 并行处理两个模型的任务
+    with TPE(max_workers=2) as model_executor:
+        model_0_future = model_executor.submit(process_model_tasks, model_0_tasks, 0)
+        model_1_future = model_executor.submit(process_model_tasks, model_1_tasks, 1)
+
+        model_0_results = model_0_future.result()
+        model_1_results = model_1_future.result()
+
+    # 合并结果
+    audio_results = [None] * len(batch_expansions)
+    for idx, path in model_0_results.items():
+        audio_results[idx] = path
+    for idx, path in model_1_results.items():
+        audio_results[idx] = path
 
     # 构建 section_steps
     for (index, highlight_indices, screen_texts, _), spoken_script, audio_path in zip(batch_expansions, spoken_scripts, audio_results):
