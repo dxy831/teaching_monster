@@ -23,6 +23,10 @@ DEFAULT_TTS_BASE_URL = "https://vip.dmxapi.com/v1"
 DEFAULT_TTS_MODEL = "tts-1-hd"
 DEFAULT_TTS_VOICE = "alloy"
 
+# 并发控制配置（可通过环境变量调整）
+LLM_EXPANSION_MAX_WORKERS = int(os.getenv("LLM_EXPANSION_MAX_WORKERS", "8"))
+TTS_SYNTHESIS_MAX_WORKERS = int(os.getenv("TTS_SYNTHESIS_MAX_WORKERS", "8"))
+
 
 def extract_response_text(response) -> str:
     try:
@@ -387,9 +391,9 @@ def build_section_steps(
         combined_screen_text = " ".join(screen_texts)
         batch_expansions.append((index, highlight_indices, screen_texts, combined_screen_text))
 
-    # 并行调用 LLM 扩展
+    # 并行调用 LLM 扩展（可通过环境变量 LLM_EXPANSION_MAX_WORKERS 调整）
     spoken_scripts = [None] * len(batch_expansions)
-    with ThreadPoolExecutor(max_workers=16) as executor:
+    with ThreadPoolExecutor(max_workers=LLM_EXPANSION_MAX_WORKERS) as executor:
         future_to_index = {
             executor.submit(
                 expand_screen_text_to_spoken_script,
@@ -406,9 +410,9 @@ def build_section_steps(
             index = future_to_index[future]
             spoken_scripts[index] = future.result()
 
-    # 并行生成 TTS 音频
+    # 并行生成 TTS 音频（可通过环境变量 TTS_SYNTHESIS_MAX_WORKERS 调整）
     audio_results = [None] * len(batch_expansions)
-    with ThreadPoolExecutor(max_workers=16) as executor:
+    with ThreadPoolExecutor(max_workers=TTS_SYNTHESIS_MAX_WORKERS) as executor:
         future_to_index = {
             executor.submit(
                 synthesize_tts_audio,
