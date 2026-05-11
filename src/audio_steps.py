@@ -20,15 +20,15 @@ from src.gpt_request import cfg
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TTS_BASE_URL = "https://vip.dmxapi.com/v1"
-DEFAULT_TTS_MODEL = "tts-1-hd"
+DEFAULT_TTS_MODEL = "tts-1"
 DEFAULT_TTS_VOICE = "alloy"
 
 # 并发控制配置（可通过环境变量调整）
 LLM_EXPANSION_MAX_WORKERS = int(os.getenv("LLM_EXPANSION_MAX_WORKERS", "8"))
 TTS_SYNTHESIS_MAX_WORKERS = int(os.getenv("TTS_SYNTHESIS_MAX_WORKERS", "8"))
 
-# TTS模型负载均衡配置
-TTS_MODELS = ["tts-1-hd", "tts-1-hd-1106"]
+# TTS模型负载均衡配置 - 使用DMXAPI可用的模型
+TTS_MODELS = ["tts-1", "tts-1-1106"]
 TTS_MODEL_MAX_WORKERS = 4  # 每个模型的最大并发数
 
 
