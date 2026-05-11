@@ -8,7 +8,7 @@ import subprocess
 import time
 import wave
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
