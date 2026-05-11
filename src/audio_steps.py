@@ -25,11 +25,11 @@ DEFAULT_TTS_VOICE = "alloy"
 
 # 并发控制配置（可通过环境变量调整）
 LLM_EXPANSION_MAX_WORKERS = int(os.getenv("LLM_EXPANSION_MAX_WORKERS", "16"))
-TTS_SYNTHESIS_MAX_WORKERS = int(os.getenv("TTS_SYNTHESIS_MAX_WORKERS", "16"))
+TTS_SYNTHESIS_MAX_WORKERS = int(os.getenv("TTS_SYNTHESIS_MAX_WORKERS", "32"))
 
 # TTS模型负载均衡配置 - 使用DMXAPI可用的模型
 TTS_MODELS = ["tts-1", "tts-1-1106"]
-TTS_MODEL_MAX_WORKERS = 8  # 每个模型的最大并发数（总共16并发）
+TTS_MODEL_MAX_WORKERS = 16  # 每个模型的最大并发数（总共32并发）
 
 
 def extract_response_text(response) -> str:
