@@ -342,9 +342,6 @@ import numpy as np
 class SectionOverviewScene(TeachingScene):
     def construct(self):
         steps = {json.dumps(section_steps, ensure_ascii=False)}
-        intro_step = steps[0]
-        roadmap_step = steps[1]
-
         self.camera.background_color = "#FFFDF4"
 
         page_title = Text("{safe_page_title}", font_size=28, color="#BE8944", weight="BOLD")
@@ -363,14 +360,14 @@ class SectionOverviewScene(TeachingScene):
 {bullet_creation_code}
 
         self.wait({OVERVIEW_INTRO_DELAY})
-        self.add_sound(intro_step["audio_path"])
+        self.add_sound(steps[0]["audio_path"])
         self.play(FadeIn(page_title), FadeIn(subtitle), FadeIn(underline), run_time=0.4)
         if {intro_wait_after_title} > 0:
             self.wait({intro_wait_after_title})
 
 {page_setup_code}
 
-        self.add_sound(roadmap_step["audio_path"])
+        self.add_sound(steps[1]["audio_path"])
 {reveal_code}
 
         if {remaining_roadmap_audio} > 0:
