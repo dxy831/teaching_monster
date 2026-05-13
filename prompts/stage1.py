@@ -178,6 +178,7 @@ def get_prompt1_outline(
     2.  **Case Design (Case Engineering)**:
         - Design a minimal but complete example or scenario.
         - The case should be concrete enough to reveal the core idea without overloading the viewer.
+        - Prefer ONE unified case that can be revisited across sections, so the learner sees how each new idea changes the understanding of the same situation.
 
     3.  **Variable / Concept Tracking List**:
         - List the core concepts, variables, structures, or quantities that the video needs to track visually.
@@ -195,6 +196,8 @@ def get_prompt1_outline(
         - The last content section should include a "forward connection" that hints how this topic leads to the next concept.
         - Respect the learner profile's `known_concepts`, `forbidden_jargon`, `must_master_outcomes`, and `likely_misconceptions` when choosing section content.
         - If a technical claim cannot be tied to a definition, law, theorem, experiment, or textbook-standard rule, do not include it.
+        - If the topic is abstract, each section must first anchor the new idea in an intuitive situation, everyday action, or previously learned concept before using the formal term.
+        - Never assume the learner already understands a newly introduced abstract noun, mechanism, or representation unless the user profile clearly says so.
 
     6.  **Structured Evidence & Scaffolding Requirements (MANDATORY)**:
         - Every section MUST declare exactly one `learning_objective` and exactly one `new_concept`.
@@ -206,7 +209,11 @@ def get_prompt1_outline(
         - If a section contains a factual statement without a suitable `evidence_basis`, remove that statement instead of guessing.
         - Every section MUST include `misconception_check` describing the most likely learner misunderstanding to prevent.
         - Every non-final section MUST include `bridge_to_next` that explains why the next section is the natural next step.
+        - For abstract-topic lessons, `bridge_to_next` must describe either (a) what the current idea still cannot explain, or (b) what new question it creates for the learner.
         - Any worked example must explicitly name which prior definition, law, theorem, or rule justifies the setup.
+        - Use a jargon budget: each section may introduce at most ONE core new concept and at most TWO unfamiliar technical terms.
+        - On first use, every unfamiliar technical term must be explained in plain learner-friendly language before or together with the formal wording.
+        - For abstract topics, include at least one dedicated bridge section somewhere in the outline whose main job is to turn an abstract term or mechanism into an intuitive idea before deeper explanation.
         - No required section field may be an empty string, whitespace-only string, empty array, null, or omitted.
         - Before returning JSON, verify every section contains non-empty values for `id`, `title`, `content`, `learning_objective`, `prior_knowledge_activation`, `new_concept`, `misconception_check`, `bridge_to_next`, `estimated_duration`, and at least one complete `evidence_basis` item.
 
@@ -237,7 +244,7 @@ def get_prompt1_outline(
         "subject": "{subject}",
         {f'"programming_language": {json.dumps(target_language)},' if subject == 'computer_science' else ''}
         "difficulty_level": "{difficulty_field_instruction}",
-        "data_case_definition": "Define the teaching case, phenomenon, or worked example in detail",
+        "data_case_definition": "Define one concrete teaching case, phenomenon, or worked example that can be reused across multiple sections",
         "algorithm_components": ["List tracked concepts, variables, formulas, structures, or stages"],
         "factuality_anchor_checklist": ["List the anchors actually used in the lesson"],
         "scaffold_map": [

@@ -50,6 +50,9 @@ Analyze instructional structure and content progression:
 - Progressive complexity building (scaffolded instruction)
 - Whether each section introduces only one core new concept
 - Whether each section clearly bridges from prior knowledge to the next target idea
+- Whether the video makes clear *why the next idea is needed*, not just what comes next
+- Whether the explanation shows a limitation, unanswered question, or motivation before introducing a new method, mechanism, or representation
+- Whether a unified example or recurring case helps hold the progression together rather than presenting disconnected facts
 
 **4. Accuracy and Depth - 20 points**
 Evaluate content quality and educational value:
@@ -61,6 +64,8 @@ Evaluate content quality and educational value:
 - Alignment of video content with intended learning objectives
 - Whether major claims are explicitly supported by a definition, law, theorem, experiment, or worked-example rule
 - Whether formulas, laws, terminology, and quantitative statements remain textbook-correct throughout
+- Whether analogies are clearly framed as intuition-building aids rather than full formal definitions
+- Whether the explanation avoids turning a helpful simplification into a misleading or false claim
 
 **5. Learner Fit & ZPD - 20 points**
 Evaluate adaptation to the intended learner:
@@ -69,6 +74,8 @@ Evaluate adaptation to the intended learner:
 - Whether new vocabulary load stays manageable for the target learner
 - Whether analogies, pacing, and examples are appropriate for the learner profile
 - Whether misconceptions are proactively addressed before they become confusion
+- Whether unfamiliar abstract terms are first introduced through plain-language intuition before formal wording
+- Whether the section gives the learner enough cognitive buffer before stacking another new abstraction
 
 **6. Visual Consistency - 20 points**
 Evaluate overall unity and coherence:
@@ -85,6 +92,7 @@ Evaluate overall unity and coherence:
 - Evaluate whether the video effectively teaches the specified knowledge point
 - Decide whether this section is already good enough to stop further optimization
 - Treat the following as hard blockers that prevent `is_good_enough=true`: lecture-line obstruction, readability-harming overlap, off-screen clipping, obvious rendering failure, severely crowded layout, unsupported factual claims, age-inappropriate unexplained jargon, or broken instructional scaffolding
+- For abstract or technical topics, a section is NOT good enough if it does not explain why the next idea is needed, introduces unfamiliar abstract terms without a plain-language bridge, or stacks too many new ideas before the learner has processed the previous one
 - Use `critical_failures` for severe pedagogy/factuality problems even if visuals are acceptable
 - Minor polish suggestions are allowed even when the section is already good enough
 
@@ -103,17 +111,20 @@ Must strictly output in the following JSON format:
 "logic_flow": {{
     "score": [0-20],
     "feedback": "Analysis of instructional structure...",
-    "scaffold_continuity_feedback": "Comment on prior-knowledge activation, transition quality, and one-concept-per-section discipline."
+    "scaffold_continuity_feedback": "Comment on prior-knowledge activation, transition quality, one-concept-per-section discipline, and whether the video clearly explains why the next idea is needed.",
+    "causal_bridge_feedback": "State whether each major transition is motivated by a limitation, unanswered question, or need that makes the next idea feel necessary."
 }},
 "accuracy_depth": {{
     "score": [0-20],
     "feedback": "Evaluation of content quality...",
     "unsupported_claim_count": 0,
-    "anchor_coverage_summary": "Explain how well the video grounds its key claims in named definitions, laws, theorems, experiments, or textbook rules."
+    "anchor_coverage_summary": "Explain how well the video grounds its key claims in named definitions, laws, theorems, experiments, or textbook rules.",
+    "analogy_boundary_feedback": "State whether analogies are clearly separated from strict definitions and whether any simplification becomes misleading."
 }},
 "learner_fit_zpd": {{
     "score": [0-20],
-    "feedback": "Evaluation of learner adaptation and ZPD fit..."
+    "feedback": "Evaluation of learner adaptation and ZPD fit...",
+    "jargon_bridge_feedback": "State whether unfamiliar abstract terms are introduced only after a plain-language bridge and whether learner load stays manageable."
 }},
 "visual_consistency": {{
     "score": [0-20],

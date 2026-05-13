@@ -494,6 +494,15 @@ def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
             _call_stage_failed(hooks, token, f"分镜脚本生成失败: {str(exc)}")
             raise
 
+        token = _call_stage_start(hooks, "inject_overview", "正在注入概述。")
+        try:
+            check_task_timeout()
+            agent.inject_overview_section()
+            _call_stage_finish(hooks, token, "概述注入成功。")
+        except Exception as exc:
+            _call_stage_failed(hooks, token, f"概述注入失败: {str(exc)}")
+            raise
+
         token = _call_stage_start(hooks, "generate_codes", "正在生成 Manim 代码。")
         try:
             check_task_timeout()

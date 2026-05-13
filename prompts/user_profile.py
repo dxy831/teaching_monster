@@ -196,6 +196,9 @@ def _build_default_profile_schema(subject: str) -> Dict[str, Any]:
                 "must_master_outcomes": ["Understand the core idea", "Explain the main process or rule"],
                 "likely_misconceptions": ["May confuse related terms if they are introduced too quickly"],
                 "evidence_preference": _default_evidence_preference(normalized_subject),
+                "jargon_tolerance": "low",
+                "baseline_assessment": "school_foundation",
+                "example_domain_preference": "everyday classroom and daily-life examples",
             },
             "stage2_storyboard_guidance": _default_stage2_guidance(normalized_subject),
             "stage3_code_guidance": _default_stage3_guidance(normalized_subject),
@@ -203,29 +206,32 @@ def _build_default_profile_schema(subject: str) -> Dict[str, Any]:
 
     return {
         "user_summary": {
-            "age_group": "College/Graduate student",
-            "background": "Some programming foundation",
-            "learning_goal": "Learn algorithms and data structures",
+            "age_group": "College student or curious beginner",
+            "background": "General technical curiosity with limited formal programming background",
+            "learning_goal": "Build a clear conceptual understanding of computing ideas",
             "target_language": "Python",
-            "difficulty_preference": "advanced",
-            "ap_level": "AP",
-            "zpd_prior_knowledge": "Understands basic programming, loops, conditionals, and simple data types",
-            "zpd_learning_target": "Master the algorithm idea, implementation, and complexity analysis",
+            "difficulty_preference": "intermediate",
+            "ap_level": "standard",
+            "zpd_prior_knowledge": "Can follow everyday logic, simple step-by-step procedures, and basic cause-and-effect reasoning",
+            "zpd_learning_target": "Understand the core idea, motivation, and tradeoffs behind the topic without assuming specialized jargon knowledge",
             "known_concepts": _default_known_concepts(normalized_subject),
             "forbidden_jargon": _default_forbidden_jargon(normalized_subject),
         },
         "stage1_outline_guidance": {
-            "audience_description": "College students with programming foundation",
-            "content_depth": "Combine theory and practice, include complexity analysis",
-            "example_style": "Use course projects and interview question scenarios",
-            "pacing_requirement": "Medium pace, appropriately skip basic concepts",
-            "motivation_hook": "Introduce from practical problems, demonstrate practical value of algorithms",
+            "audience_description": "Learners who need intuition-first explanations before formal terminology",
+            "content_depth": "Focus on intuition first, then the core mechanism, and only then lightweight formal detail",
+            "example_style": "Use one relatable scenario that can be revisited across sections",
+            "pacing_requirement": "Medium-slow pace with explicit bridges between ideas",
+            "motivation_hook": "Start from a familiar problem and explain why a simple first approach becomes insufficient",
             "ap_teaching_pattern": "Problem → Intuition → Execution Trace → Implementation → Complexity / Tradeoff → Generalization",
             "factuality_anchors": [],
-            "zpd_bridge_strategy": "Start from a familiar problem scenario, then formalize into algorithmic thinking",
-            "must_master_outcomes": ["Explain the core algorithm idea", "Reason about time and space complexity"],
-            "likely_misconceptions": ["May memorize steps without understanding why the algorithm works"],
+            "zpd_bridge_strategy": "Start from an everyday decision or process the learner already understands, then map it to the formal concept step by step",
+            "must_master_outcomes": ["Explain the core idea in plain language", "Describe why the next idea is needed"],
+            "likely_misconceptions": ["May follow terminology without understanding what problem it solves", "May confuse analogy with the formal definition if the bridge is too fast"],
             "evidence_preference": _default_evidence_preference(normalized_subject),
+            "jargon_tolerance": "low",
+            "baseline_assessment": "curious_beginner",
+            "example_domain_preference": "everyday tools, study scenarios, and daily decisions",
         },
         "stage2_storyboard_guidance": _default_stage2_guidance(normalized_subject),
         "stage3_code_guidance": _default_stage3_guidance(normalized_subject),
@@ -266,6 +272,9 @@ def _normalize_profile_schema(parsed: Dict[str, Any], subject: Optional[str]) ->
             "must_master_outcomes": _coerce_list_of_strings(stage1.get("must_master_outcomes"), defaults["stage1_outline_guidance"]["must_master_outcomes"]),
             "likely_misconceptions": _coerce_list_of_strings(stage1.get("likely_misconceptions"), defaults["stage1_outline_guidance"]["likely_misconceptions"]),
             "evidence_preference": _coerce_string(stage1.get("evidence_preference"), defaults["stage1_outline_guidance"]["evidence_preference"]),
+            "jargon_tolerance": _coerce_string(stage1.get("jargon_tolerance"), defaults["stage1_outline_guidance"].get("jargon_tolerance", "low")),
+            "baseline_assessment": _coerce_string(stage1.get("baseline_assessment"), defaults["stage1_outline_guidance"].get("baseline_assessment", "school_foundation")),
+            "example_domain_preference": _coerce_string(stage1.get("example_domain_preference"), defaults["stage1_outline_guidance"].get("example_domain_preference", "everyday examples")),
         },
         "stage2_storyboard_guidance": {
             "visual_complexity": _coerce_string(stage2.get("visual_complexity"), defaults["stage2_storyboard_guidance"]["visual_complexity"]),
@@ -370,7 +379,10 @@ Please output strictly in the following JSON format without any additional text:
         "zpd_bridge_strategy": "How to explicitly activate prior knowledge before introducing new material. E.g. 'Start from the concept of slope that students already know, then transition to the idea of instantaneous rate of change'",
         "must_master_outcomes": ["2-4 measurable outcomes the learner should achieve by the end of the video"],
         "likely_misconceptions": ["Topic-specific misunderstandings this learner is likely to have"],
-        "evidence_preference": "Preferred evidence style: definition / law / experiment / textbook theorem / worked example"
+        "evidence_preference": "Preferred evidence style: definition / law / experiment / textbook theorem / worked example",
+        "jargon_tolerance": "low / medium / high — how much unexplained terminology the learner can tolerate",
+        "baseline_assessment": "A concise learner baseline such as school_foundation / curious_beginner / technical_beginner / strong_foundation",
+        "example_domain_preference": "Which kind of real-life domain should examples come from"
     }},
     "stage2_storyboard_guidance": {{
         "visual_complexity": "Visual complexity requirements (simple and clear/moderate/detailed and complex)",
@@ -438,6 +450,9 @@ def get_stage1_profile_prompt(parsed_profile: Dict[str, Any]) -> str:
 - **Must Master Outcomes**: {guidance.get('must_master_outcomes', [])}
 - **Likely Misconceptions**: {guidance.get('likely_misconceptions', [])}
 - **Evidence Preference**: {guidance.get('evidence_preference', 'definition / law / experiment / textbook theorem / worked example')}
+- **Jargon Tolerance**: {guidance.get('jargon_tolerance', 'low')}
+- **Learner Baseline**: {guidance.get('baseline_assessment', 'school_foundation')}
+- **Preferred Example Domain**: {guidance.get('example_domain_preference', 'everyday examples')}
 """
 
 
@@ -477,6 +492,8 @@ def get_stage2_profile_prompt(parsed_profile: Dict[str, Any]) -> str:
 - **Avoid Visual Types**: {guidance.get('avoid_visual_types', 'None')}
 - **Max New Terms Per Section**: {guidance.get('max_new_terms_per_section', 3)}
 - **Retrieval Pause Frequency**: {guidance.get('retrieval_pause_frequency', 'every 2 sections')}
+- **Jargon Tolerance**: {parsed_profile.get('stage1_outline_guidance', {}).get('jargon_tolerance', 'low')}
+- **Preferred Example Domain**: {parsed_profile.get('stage1_outline_guidance', {}).get('example_domain_preference', 'everyday examples')}
 """
 
 
@@ -492,7 +509,6 @@ def get_stage3_profile_prompt(parsed_profile: Dict[str, Any]) -> str:
     """
     summary = parsed_profile.get("user_summary", {})
     guidance = parsed_profile.get("stage3_code_guidance", {})
-    code_language = guidance.get('code_language', 'Not applicable')
 
     return f"""
 ## User Profile (AI Intelligent Analysis)

@@ -150,21 +150,24 @@ def get_prompt2_storyboard(
         - For non-computer-science subjects, animation descriptions must not require code displays or full-code sections.
 
     6.  **ZPD Pacing Requirements**:
-        - The first lecture_line of each section should activate prior knowledge (e.g., "We already know that... so what happens when...?").
         - Each section should introduce only ONE core new concept — avoid packing multiple new ideas.
-        - Between sections, include a bridging sentence that connects the completed topic to the next one.
         - **Interactive pause points (optional but recommended)**: Before revealing the solution to a worked example, consider adding a lecture_line like "Pause the video here and try it yourself" or "Can you figure out what happens next?" with the corresponding animation showing the problem setup. This activates retrieval practice and improves learning retention.
         - **Concept-before-example rule**: Always introduce the concept definition or principle FIRST, then follow with the worked example. Never show an example before explaining what concept it demonstrates.
         - **Motivation-before-definition rule**: Before defining a new concept, provide a 1-sentence motivation explaining WHY this concept is useful or what problem it solves. This helps the learner understand the purpose before diving into details.
         - Respect the outline's `prior_knowledge_activation`, `new_concept`, `evidence_basis`, and `bridge_to_next` fields when writing lecture lines.
-        - The first lecture line MUST realize the outline's prior-knowledge activation in learner-appropriate language.
         - Each section MUST include at least one lecture line that states why the key claim is valid, based on a definition, law, theorem, experiment, or worked-example rule.
         - The section's vocabulary must stay within the learner profile's `max_new_terms_per_section` and avoid `forbidden_jargon` unless immediately explained.
 
-    7.  **Traceability Requirements (MANDATORY)**:
+    7.  **Separation of Screen Text and Spoken Transitions (MANDATORY)**:
+        - `lecture_lines` are strictly for ON-SCREEN display. **NEVER include transition sentences, greetings, or "bridging" chat in `lecture_lines`.** They must contain pure educational facts only.
+        - To satisfy ZPD, use `intro_transition_spoken` to activate prior knowledge (e.g., "We already know that... so what happens when...?"). This is spoken BEFORE the on-screen text appears.
+        - Use `outro_transition_spoken` for the bridging sentence connecting the completed topic to the next one. This is spoken AFTER the on-screen text finishes.
+        - If the section does not need an intro or outro transition, leave these fields `null`.
+
+    8.  **Traceability Requirements (MANDATORY)**:
         - Each section must include `evidence_lines_indices` listing the lecture line indices that state evidence, justification, or source principles.
-        - Each section must include `zpd_check_line_index` pointing to the lecture line that activates prior knowledge.
-        - Each section must include `bridge_line_index` pointing to the lecture line that bridges to the next idea or next section.
+        - Each section must include `intro_transition_spoken` (string or null) for activating prior knowledge.
+        - Each section must include `outro_transition_spoken` (string or null) for bridging to the next section.
         - Each section must include `new_terms_introduced`, listing only the genuinely new technical terms introduced in that section.
         - `new_terms_introduced` must be short, learner-level-appropriate, and consistent with the single `new_concept` for the section.
 
@@ -182,13 +185,13 @@ def get_prompt2_storyboard(
                 "title": "Scene Introduction",
                 "estimated_duration": 45,
                 "lecture_lines": [
-                    "First narration line",
-                    "Second narration line"
+                    "First fact-based core concept line",
+                    "Second educational line with evidence"
                 ],
                 "highlight_groups": [[0], [1]],
                 "evidence_lines_indices": [1],
-                "zpd_check_line_index": 0,
-                "bridge_line_index": 1,
+                "intro_transition_spoken": "Welcome. Before we begin, remember what we learned last time?",
+                "outro_transition_spoken": "Now that we understand this, let's look at the next part.",
                 "new_terms_introduced": ["example term"],
                 "animations": [
                     "Define Visual Layout: Left-Right Split.",
@@ -207,8 +210,8 @@ def get_prompt2_storyboard(
                 ],
                 "highlight_groups": [[0], [1, 2]],
                 "evidence_lines_indices": [1, 2],
-                "zpd_check_line_index": 0,
-                "bridge_line_index": 2,
+                "intro_transition_spoken": "Building on the introduction...",
+                "outro_transition_spoken": "This perfectly sets up our final calculation.",
                 "new_terms_introduced": ["key term", "second term"],
                 "animations": [
                     "Define Visual Layout: Left-Right Split for lecture and visuals.",

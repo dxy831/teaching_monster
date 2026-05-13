@@ -71,13 +71,11 @@ def retry_with_backoff(operation_name: str, func: Callable, max_retries: int, ba
 
 # ── Overview narration expansion special prompt ─────────────────────────────────
 _OVERVIEW_EXPANSION_EXAMPLES = """
-You are a teaching video narration polisher, currently processing the "course overview/table of contents" section narration.
+You are a teaching video narration polisher, currently processing the overview section narration.
 
 Task:
 - Expand the screen text below into a more natural, conversational, single-sentence narration suitable for TTS playback
-- Must sound as natural and fluent as an experienced teacher introducing the course outline in class
-- Don't start every sentence with "next" or "now"; vary the transition phrasing
-- Avoid repetitive openings such as "Now we move into..." or "Now let's move on to..."
+- Must sound as natural and fluent as an experienced teacher introducing the lesson roadmap in class
 - Preserve the original meaning; do not introduce new knowledge points
 - Must be "minimal incremental expansion", with a concise teacher-speech style
 - Output must be a single line of plain text only, no quotes, numbering, or explanations
@@ -85,19 +83,124 @@ Task:
 - Output spoken_script must be in English
 
 Reference examples (screen text → excellent narration):
-- "This video will be divided into the following parts" → "Before we officially begin, let's take a look at the overall structure of this lesson"
-- "Part 1, Basic Concepts" → "First, we'll start with the basic concepts to help everyone build a solid foundation"
-- "Part 2, Core Principles" → "Building on that, in part 2 we'll dive deeper into the core principles"
-- "Part 3, Code Implementation" → "After understanding the principles, in part 3 we'll get hands-on with the code"
-- "Part 4, Practical Case Study" → "From there, we'll explore a practical case study in part 4"
-- "Part 5, Performance Optimization" → "Then, in part 5 we'll discuss performance optimization techniques"
-- "Part 6, Common Issues" → "Finally, we'll summarize some common issues and important considerations"
-- "the fourth part, Energy Payoff Phase" → "From there, we'll examine the Energy Payoff Phase in the fourth part"
-- "the fifth part, Energy Accounting Summary" → "Next, the fifth part gives us a clear accounting summary of the energy flows"
-- "Alright, let's officially begin learning the specific content" → "Okay, now that we understand the course structure, let's move into the first part"
+- "Today's roadmap" → "Let's first look at the roadmap, so you can see how the lesson will unfold"
+- "Core problem" → "We'll begin with the core problem, because that gives the whole lesson a clear starting point"
+- "First useful idea" → "From there, we'll move into the first useful idea and see how it starts to help"
+- "Key limitation" → "We'll also notice the key limitation, because that is what pushes us toward a better explanation"
+- "Final takeaway" → "In the end, we'll connect everything into one clear takeaway"
+- "Let's begin" → "With that roadmap in place, let's begin"
 
 Screen text:
 """
+
+_OVERVIEW_COMBINED_NARRATION_PROMPT = """
+You are writing the spoken overview for the opening of an educational lesson.
+
+Task:
+- Write one short, coherent teacher-style introduction for TTS playback
+- The screen phrases are roadmap labels only; the spoken narration should add the opening and closing transitions that do NOT appear on screen
+- Start by introducing the lesson topic naturally
+- Explicitly tell the learner that the lesson will follow the roadmap below
+- Connect the roadmap phrases into 2 to 4 smooth sentences in the same order
+- End with a natural transition into the first part, such as beginning the first part of the lesson
+- Explain the progression and logic between the parts, not just a point-by-point list
+- Keep the tone smooth, quick, and classroom-like
+- Do not repeatedly start sentences with "next"
+- Do not add knowledge points beyond the topic and roadmap phrases
+- Output plain English text only, with no quotes, numbering, labels, or markdown
+
+Lesson topic:
+{topic}
+
+Roadmap phrases:
+{roadmap_lines}
+"""
+
+
+def build_overview_spoken_script(
+    topic: str,
+    lecture_lines: List[str],
+    api_func: Callable,
+    max_retries: int = 3,
+    max_tokens: int = 300,
+) -> str:
+    core_lines = [str(line).strip() for line in lecture_lines if str(line).strip()]
+    if not core_lines:
+        safe_topic = topic.strip() or "this lesson"
+        return f"In this video, we will introduce {safe_topic}. Let's begin the first part."
+
+    roadmap_lines = "\n".join(f"- {line}" for line in core_lines)
+    prompt = _OVERVIEW_COMBINED_NARRATION_PROMPT.format(
+        topic=topic.strip() or "this lesson",
+        roadmap_lines=roadmap_lines,
+    ).strip()
+
+    def _request():
+        response = api_func(prompt, max_tokens=max_tokens)
+        spoken_script = extract_response_text(response)
+        if not spoken_script:
+            raise ValueError("empty overview spoken_script")
+
+        spoken_script = re.sub(r'^(spoken_script|output|narration)\s*[:：]\s*', '', spoken_script, flags=re.IGNORECASE)
+        spoken_script = re.sub(r'^(spoken_script|output|narration)\s+', '', spoken_script, flags=re.IGNORECASE)
+        spoken_script = spoken_script.strip()
+        if not spoken_script:
+            raise ValueError("empty overview spoken_script after cleanup")
+        return spoken_script
+
+    return retry_with_backoff(
+        operation_name="overview spoken script generation",
+        func=_request,
+        max_retries=max_retries,
+        base_delay=0.5,
+    )
+
+
+def _split_overview_spoken_script(spoken_script: str, topic: str) -> tuple[str, str]:
+    cleaned = re.sub(r'^(spoken_script|output|narration)\s*[:：]\s*', '', spoken_script, flags=re.IGNORECASE)
+    cleaned = re.sub(r'^(spoken_script|output|narration)\s+', '', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
+
+    safe_topic = topic.strip() or "this lesson"
+    if not cleaned:
+        return (
+            f"Today we're diving into {safe_topic}.",
+            "We'll follow the roadmap on screen step by step.",
+        )
+
+    parts = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)
+    if len(parts) >= 2:
+        intro_script = parts[0].strip()
+        roadmap_script = parts[1].strip()
+        if intro_script and roadmap_script:
+            return intro_script, roadmap_script
+
+    intro_script = f"Today we're diving into {safe_topic}."
+    roadmap_script = cleaned if cleaned.endswith((".", "!", "?")) else f"{cleaned}."
+    return intro_script, roadmap_script
+
+
+def build_overview_cue_timings(lecture_lines: List[str], total_duration: float) -> List[float]:
+    core_lines = [str(line).strip() for line in lecture_lines if str(line).strip()]
+    if not core_lines:
+        return []
+
+    if total_duration <= 0:
+        return [0.0 for _ in core_lines]
+
+    lead_in = min(0.8, total_duration * 0.2)
+    reveal_window = max(total_duration - lead_in, 0.0)
+    if len(core_lines) == 1:
+        return [0.0]
+
+    interval = reveal_window / len(core_lines) if core_lines else 0.0
+    cue_timings: List[float] = []
+    for index in range(len(core_lines)):
+        cue_time = max(0.0, lead_in + index * interval - 0.15)
+        cue_timings.append(min(cue_time, total_duration))
+    cue_timings[0] = 0.0
+    return cue_timings
+
 
 
 def _is_overview_screen_text(screen_text: str) -> bool:
@@ -126,7 +229,6 @@ def expand_screen_text_to_spoken_script(
     max_retries: int = 3,
     max_tokens: int = 300,
     user_profile: Optional['UserProfile'] = None,
-    subject: str = "computer_science",
 ) -> str:
     # 根据年级获取术语简化策略
     grade_level = "high_school"  # 默认
@@ -410,12 +512,74 @@ def build_section_steps(
     expansion_max_retries: int = 3,
     tts_max_retries: int = 5,
     user_profile: Optional['UserProfile'] = None,
-    subject: str = "computer_science",
 ) -> List[dict]:
     output_root = Path(output_root).resolve()
     audio_dir = reset_section_audio_dir(output_root / "audio" / section.id)
     section_steps = []
     highlight_groups = getattr(section, "highlight_groups", None) or [[index] for index in range(len(section.lecture_lines))]
+
+    if getattr(section, "id", "") == "section_overview":
+        spoken_script = build_overview_spoken_script(
+            getattr(section, "title", ""),
+            section.lecture_lines,
+            api_func,
+            expansion_max_retries,
+            300,
+        )
+        intro_script, roadmap_script = _split_overview_spoken_script(spoken_script, getattr(section, "title", ""))
+
+        intro_audio_path = synthesize_tts_audio(
+            intro_script,
+            audio_dir / "step_00.wav",
+            max_retries=tts_max_retries,
+            timeout=120,
+            model_index=0,
+        )
+        roadmap_audio_path = synthesize_tts_audio(
+            roadmap_script,
+            audio_dir / "step_01.wav",
+            max_retries=tts_max_retries,
+            timeout=120,
+            model_index=1,
+        )
+
+        intro_audio_duration = measure_audio_duration(intro_audio_path)
+        roadmap_audio_duration = measure_audio_duration(roadmap_audio_path)
+        cue_timings = build_overview_cue_timings(section.lecture_lines, roadmap_audio_duration)
+        section_steps.append(
+            {
+                "screen_text": intro_script,
+                "screen_texts": [intro_script],
+                "spoken_script": intro_script,
+                "audio_path": str(intro_audio_path.resolve()),
+                "audio_duration": intro_audio_duration,
+                "highlight_indices": [0],
+                "page_index": 0,
+                "page_line_indices": [0],
+                "page_screen_texts": [intro_script],
+                "step_index_within_page": 0,
+                "segment_type": "intro",
+                "cue_timings": [],
+            }
+        )
+        section_steps.append(
+            {
+                "screen_text": "\n".join(section.lecture_lines),
+                "screen_texts": list(section.lecture_lines),
+                "spoken_script": roadmap_script,
+                "audio_path": str(roadmap_audio_path.resolve()),
+                "audio_duration": roadmap_audio_duration,
+                "highlight_indices": list(range(len(section.lecture_lines))),
+                "page_index": 0,
+                "page_line_indices": list(range(len(section.lecture_lines))),
+                "page_screen_texts": list(section.lecture_lines),
+                "step_index_within_page": 1,
+                "segment_type": "roadmap",
+                "cue_timings": cue_timings,
+            }
+        )
+        return section_steps
+
     paged_groups = _paginate_highlight_groups(section, highlight_groups)
 
     # 批量扩展短句以减少 API 调用
@@ -454,13 +618,22 @@ def build_section_steps(
                 expansion_max_retries,
                 300,  # max_tokens
                 user_profile,
-                subject
             ): index
             for index, batch_expansion in enumerate(batch_expansions)
         }
         for future in as_completed(future_to_index):
             index = future_to_index[future]
             spoken_scripts[index] = future.result()
+
+    # 注入过渡句（仅在语音中念出，不出现在画面文本中）
+    if len(spoken_scripts) > 0:
+        intro_transition = getattr(section, "intro_transition_spoken", None)
+        if intro_transition:
+            spoken_scripts[0] = f"{intro_transition} {spoken_scripts[0]}"
+            
+        outro_transition = getattr(section, "outro_transition_spoken", None)
+        if outro_transition:
+            spoken_scripts[-1] = f"{spoken_scripts[-1]} {outro_transition}"
 
     # 并行生成 TTS 音频 - 使用两个模型负载均衡，每个模型4个并发
     audio_results = [None] * len(batch_expansions)

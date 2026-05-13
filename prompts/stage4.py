@@ -3,9 +3,11 @@
 def get_prompt4_layout_feedback(section, position_table):
     return f"""
 1. ANALYSIS REQUIREMENTS:
-- Please analyze this Manim educational video solely from the perspective of **Layout** and **Spatial Positioning**.
+- Please analyze this Manim educational video from BOTH perspectives below:
+  A. **Layout and Spatial Positioning**
+  B. **Pedagogical Clarity for the intended learner**
 - Refer to the provided grid diagram for precise spatial analysis.
-- Core objective: Eliminate obstruction, overlap, and optimize grid space utilization.
+- Core objective: Eliminate obstruction, overlap, and also identify teaching-flow problems that increase learner confusion.
 
 2. Content Context:
 - Title: {section.title}
@@ -25,13 +27,20 @@ lecture | A1 A2 A3 A4 A5 A6 | B1 B2 B3 B4 B5 B6 | C1 C2 C3 C4 C5 C6 | D1 D2 D3 D
 - **Grid Violation**: Is space utilization unreasonable (too crowded or too sparse)?
 - **Not Disappeared**: Check if there are elements that should have faded out but didn't.
 
-5. Mandatory Constraints:
+5. Pedagogy Evaluation (check all items):
+- **Abstract term jump**: Are unfamiliar abstract terms used before the learner gets an intuitive bridge?
+- **Causal bridge**: Does the explanation make clear why the next idea or step is needed?
+- **Concept packing**: Are too many new ideas introduced in one section?
+- **Evidence clarity**: Are claims stated without enough explanation, anchor, or support?
+- **Learner load**: Would the intended learner likely get overloaded by pacing, wording, or unexplained terminology?
+
+6. Mandatory Constraints:
 - Color: Point out areas where colors are unclear.
 - Font/Scale: Adjust font size and asset scaling based on grid position.
 - Consistency: **Do NOT** apply any position or size animations to lecture lines on the left; only change color.
 - Proximity: Ensure label text is within 1 grid unit of its corresponding object.
 
-6. Lecture Line Batching Rules Verification (Hard Constraint):
+7. Lecture Line Batching Rules Verification (Hard Constraint):
 - Each lecture line should not exceed **8 English words** (including punctuation, letters, numbers) to fit on one line; only split by semantic meaning when exceeding 8 words.
 - Prohibit forcibly splitting complete short sentences under 8 words into two lines.
 - First determine if there is a code block:
@@ -43,7 +52,7 @@ lecture | A1 A2 A3 A4 A5 A6 | B1 B2 B3 B4 B5 B6 | C1 C2 C3 C4 C5 C6 | D1 D2 D3 D
     - Strictly prohibit mechanically filling each batch to 4 or 8 lines
 - If violations of the above rules are found, you must provide executable fix suggestions in `improvements` (including object and code modification direction).
 
-7. Rendering Failure Detection (Hard Constraint, New):
+8. Rendering Failure Detection (Hard Constraint):
 - Must check for "character rendering failure" phenomenon: small squares/hollow boxes/garbled placeholders appearing on screen.
 - Focus on checking: mathematical formulas, superscripts/subscripts, comparison symbols (such as ≤ ≥ ≠), and checkmark/cross symbols (✓ ✗ × √).
 - If the above issues are found, `layout.has_issues` must be true, and clearly specify in `improvements`:
@@ -54,25 +63,33 @@ lecture | A1 A2 A3 A4 A5 A6 | B1 B2 B3 B4 B5 B6 | C1 C2 C3 C4 C5 C6 | D1 D2 D3 D
     - Checkmark: `MathTex(r"\\checkmark", color="#478211")`
     - Cross: `MathTex(r"\\times", color="#C84A2B")`
 
-8. Important: Must strictly output according to the following JSON structure:
+9. Important: Must strictly output according to the following JSON structure:
 {{
     "layout": {{
-        "has_issues": true,  // true if there are obvious layout issues
+        "has_issues": true,
         "improvements": [
             {{
                 "problem": "Specific problem description (English)",
                 "solution": "Suggested code logic modification, e.g.: Move circle from C3 to E3",
-                "line_number": X, // Estimated code line number
+                "line_number": 0,
                 "object_affected": "Name of affected object"
-            }},
-            ...
+            }}
+        ]
+    }},
+    "pedagogy": {{
+        "has_issues": true,
+        "improvements": [
+            {{
+                "problem": "Specific pedagogy problem (English)",
+                "solution": "Concrete revision direction for wording, pacing, transition, or terminology"
+            }}
         ]
     }}
 }}
 
-9. Solution Requirements:
-- Provide specific grid coordinate suggestions in the solution.
-- Only list the top 3 layout issues that most affect visual experience!
+10. Solution Requirements:
+- Provide specific grid coordinate suggestions in layout solutions when relevant.
+- Only list the top 3 issues that most affect teaching effectiveness and visual clarity.
 - Do not provide video timestamps.
 - Problem descriptions should be concise, solutions should be specific and executable.
 """
@@ -100,6 +117,17 @@ You are a Manim v0.19.0 educational animation expert.
     - Each line should not exceed 8 words (only split by semantic meaning when exceeding)
     - With code block: ≤4 lines per batch; without code block: ≤8 lines per batch
     - Batching prioritizes semantic completeness, strictly prohibit mechanically filling line counts
+- If feedback identifies an abstract-term jump:
+    - Add a plain-language bridge before the formal term appears
+    - Reword the first mention so the learner can understand the intuition before the terminology
+- If feedback identifies a missing causal bridge:
+    - Add one short line that explains what the current idea cannot yet handle, or what new question it creates, before moving to the next idea
+- If feedback identifies concept packing or learner overload:
+    - Reduce the number of first-time terms in that section
+    - Split the lecture batching by semantic step instead of cramming multiple new ideas into one batch
+- If feedback identifies weak evidence or unsupported claims:
+    - Revise the wording so the claim is anchored in a named definition, law, theorem, experiment, workflow rule, or worked example
+    - If a statement is only an analogy, label it as intuition rather than strict definition
 - If character rendering failure exists (small squares/garbled placeholders):
     - Mathematical and symbol content must be changed to `MathTex`
     - Entire sentence text containing mathematical fragments should be changed to Text+MathTex mixed layout

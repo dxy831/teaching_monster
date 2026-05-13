@@ -47,8 +47,6 @@ from src.overview_scene import (
     build_overview_lecture_lines,
     generate_overview_manim_code,
     _merge_section_titles_with_ai,
-    OVERVIEW_INTRO_LINE,
-    OVERVIEW_ENDING_LINE,
 )
 from src.cover_scene import generate_cover_manim_code
 
@@ -98,8 +96,8 @@ class Section:
     estimated_duration: Optional[int] = None  # 预计时长（秒）
     highlight_groups: Optional[List[List[int]]] = None
     evidence_lines_indices: Optional[List[int]] = None
-    zpd_check_line_index: Optional[int] = None
-    bridge_line_index: Optional[int] = None
+    intro_transition_spoken: Optional[str] = None
+    outro_transition_spoken: Optional[str] = None
     new_terms_introduced: Optional[List[str]] = None
 
 
@@ -465,7 +463,9 @@ Do not include quotes or extra explanation.
         with open(steps_file, "r", encoding="utf-8") as f:
             section_steps = json.load(f)
 
-        expected_steps = len(section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines))
+        expected_steps = 2 if section.id == "section_overview" else len(
+            section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines)
+        )
         is_valid, validation_error = self._validate_cached_section_steps(section_steps, expected_steps)
         if not is_valid:
             print(f"⚠️ {section.id} 缓存 steps 无效，忽略缓存并重建: {validation_error}")
@@ -1019,8 +1019,8 @@ Return only one integer number.
 
             raw_section["highlight_groups"] = self._build_default_highlight_groups(lecture_lines)
             raw_section["evidence_lines_indices"] = [min(1, len(lecture_lines) - 1)]
-            raw_section["zpd_check_line_index"] = 0
-            raw_section["bridge_line_index"] = len(lecture_lines) - 1
+            raw_section["intro_transition_spoken"] = None
+            raw_section["outro_transition_spoken"] = None
 
             new_terms = raw_section.get("new_terms_introduced")
             if not isinstance(new_terms, list):
@@ -1318,29 +1318,16 @@ Return only one integer number.
                     normalized_section["evidence_lines_indices"] = []
 
                 try:
-                    normalized_section["zpd_check_line_index"] = self._validate_single_index(
-                        "zpd_check_line_index",
-                        section.get("zpd_check_line_index"),
-                        line_count,
-                    )
-                except ValueError as exc:
+                    normalized_section["intro_transition_spoken"] = section.get("intro_transition_spoken")
+                except Exception as exc:
                     section_errors.append(str(exc))
-                    normalized_section["zpd_check_line_index"] = 0
+                    normalized_section["intro_transition_spoken"] = None
 
                 try:
-                    normalized_section["bridge_line_index"] = self._validate_single_index(
-                        "bridge_line_index",
-                        section.get("bridge_line_index"),
-                        line_count,
-                    )
-                except ValueError as exc:
+                    normalized_section["outro_transition_spoken"] = section.get("outro_transition_spoken")
+                except Exception as exc:
                     section_errors.append(str(exc))
-                    normalized_section["bridge_line_index"] = max(0, line_count - 1)
-
-                if section.get("zpd_check_line_index") not in (0, None):
-                    section_errors.append("zpd_check_line_index should point to the first lecture line")
-                if isinstance(section.get("bridge_line_index"), int) and section.get("bridge_line_index") < max(0, line_count - 2):
-                    section_errors.append("bridge_line_index should occur near the end of the section")
+                    normalized_section["outro_transition_spoken"] = None
 
                 new_terms = section.get("new_terms_introduced")
                 if not isinstance(new_terms, list):
@@ -1355,8 +1342,8 @@ Return only one integer number.
             else:
                 normalized_section["highlight_groups"] = []
                 normalized_section["evidence_lines_indices"] = []
-                normalized_section["zpd_check_line_index"] = 0
-                normalized_section["bridge_line_index"] = 0
+                normalized_section["intro_transition_spoken"] = None
+                normalized_section["outro_transition_spoken"] = None
                 normalized_section["new_terms_introduced"] = []
 
             normalized_sections.append(normalized_section)
@@ -1679,8 +1666,8 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
                 estimated_duration=section_data.get("estimated_duration"),
                 highlight_groups=highlight_groups,
                 evidence_lines_indices=section_data.get("evidence_lines_indices"),
-                zpd_check_line_index=section_data.get("zpd_check_line_index"),
-                bridge_line_index=section_data.get("bridge_line_index"),
+                intro_transition_spoken=section_data.get("intro_transition_spoken"),
+                outro_transition_spoken=section_data.get("outro_transition_spoken"),
                 new_terms_introduced=section_data.get("new_terms_introduced"),
             )
             self.sections.append(section)
@@ -1792,23 +1779,24 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
             if s.id not in ("section_overview", "section_cover")
         ]
 
-        # 使用 AI 合并精简 section titles（5-12 条）
-        print("🤖 正在使用 AI 合并精简章节标题...")
+        # 使用 AI 合并精简章节标题（3-6 条高层学习路径）
+        print("🤖 正在使用 AI 提炼概述主线...")
         merged_titles = _merge_section_titles_with_ai(
             section_titles=section_titles,
             topic=self.outline.topic,
             api_func=self._request_api_and_track_tokens,
         )
-        print(f"📋 合并后共 {len(merged_titles)} 条概要: {merged_titles}")
+        print(f"📋 提炼后共 {len(merged_titles)} 条概述主线: {merged_titles}")
 
-        # 生成概述的 lecture_lines（不含总起行，直接从 bullet 开始）
+        # 生成概述的 lecture_lines（仅包含屏幕展示的 roadmap phrases）
         overview_lines = build_overview_lecture_lines(
             section_titles=merged_titles,
+            user_profile_summary=(self.user_profile.parsed_profile or {}).get("user_summary", {}) if self.user_profile else None,
         )
 
         overview_section = Section(
             id="section_overview",
-            title="课程导览",
+            title=self.outline.topic,
             lecture_lines=overview_lines,
             animations=["FadeIn title", "Sequential FadeIn bullet points", "FadeIn ending"],
             estimated_duration=20,  # 概述约 15-25 秒
@@ -1831,41 +1819,37 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
         # 确保 section_steps 已构建
         section_steps = self.prepare_section_steps(section)
 
-        # 从 lecture_lines 中提取合并后的 section titles
-        # 新格式：起始语 + "第X部分，标题" + 结束语
-        # 旧格式（兼容）：圈号格式 "① 标题" + 收尾行
+        # 从 lecture_lines 中提取概述展示项
         merged_titles = []
         for line in section.lecture_lines:
-            # 跳过起始语
-            if line == OVERVIEW_INTRO_LINE:
-                continue
-            # 跳过结束语（新格式）
-            if line == OVERVIEW_ENDING_LINE:
-                continue
-            # 跳过旧格式收尾行（兼容旧数据）
-            if line == "让我们开始吧！":
+            stripped_line = line.strip()
+            if not stripped_line:
                 continue
 
-            # 英文格式：提取 "the first part, Title" 中的标题部分
-            en_match = _re.match(r"^the \w+ part, (.+)$", line, _re.IGNORECASE)
+            # 旧格式兼容：提取 "the first part, Title" 中的标题部分
+            en_match = _re.match(r"^the \w+ part, (.+)$", stripped_line, _re.IGNORECASE)
             if en_match:
                 merged_titles.append(en_match.group(1).strip())
                 continue
 
-            # 中文格式（兼容旧数据）：提取 "第X部分，标题" 中的标题部分
-            match = _re.match(r"^第[一二三四五六七八九十\d]+部分，(.+)$", line)
+            # 旧格式兼容：提取 "第X部分，标题" 中的标题部分
+            match = _re.match(r"^第[一二三四五六七八九十\d]+部分，(.+)$", stripped_line)
             if match:
                 merged_titles.append(match.group(1).strip())
                 continue
 
             # 旧格式兼容：去掉圈号前缀（如 "① "）
-            cleaned = _re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]\s*", "", line)
-            if cleaned and cleaned != line:
+            cleaned = _re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]\s*", "", stripped_line)
+            if cleaned and cleaned != stripped_line:
                 merged_titles.append(cleaned)
+                continue
+
+            merged_titles.append(stripped_line)
 
         code = generate_overview_manim_code(
             section_titles=merged_titles,
             section_steps=section_steps,
+            page_title_text=self.outline.topic,
         )
 
         # 注入 base_class（与其他 section 统一处理）
@@ -2054,9 +2038,10 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
             output_root=self.output_dir,
             api_func=self._request_api_and_track_tokens,
             user_profile=self.user_profile,
-            subject=self.subject,
         )
-        expected_steps = len(section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines))
+        expected_steps = 2 if section.id == "section_overview" else len(
+            section.highlight_groups or self._build_default_highlight_groups(section.lecture_lines)
+        )
         is_valid, validation_error = self._validate_cached_section_steps(section_steps, expected_steps)
         if not is_valid:
             raise ValueError(f"Generated invalid steps for {section.id}: {validation_error}")
@@ -2328,6 +2313,14 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                         if prob or sol:
                             suggested_improvements.append(f"[LAYOUT] Problem: {prob}; Solution: {sol}")
 
+                pedagogy = data.get("pedagogy", {})
+                for it in pedagogy.get("improvements", []) or []:
+                    if isinstance(it, dict):
+                        prob = str(it.get("problem", "")).strip()
+                        sol = str(it.get("solution", "")).strip()
+                        if prob or sol:
+                            suggested_improvements.append(f"[PEDAGOGY] Problem: {prob}; Solution: {sol}")
+
             except json.JSONDecodeError:
                 print(f"⚠️ {self.learning_topic} JSON 解析失败，回退到关键词分析")
 
@@ -2340,7 +2333,8 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                     for sol in re.findall(r"Solution\s*:\s*(.+)", feedback_content, flags=re.IGNORECASE):
                         suggested_improvements.append(f"[LAYOUT] Problem: ; Solution: {sol.strip()}")
 
-            return has_layout_issues, suggested_improvements
+            has_pedagogy_issues = any(item.startswith("[PEDAGOGY]") for item in suggested_improvements)
+            return has_layout_issues or has_pedagogy_issues, suggested_improvements
 
         def _parse_stage5_evaluation(feedback_content):
             try:
@@ -2370,12 +2364,17 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                 scores["element_layout"] >= 12
                 and scores["overall_score"] >= 76
                 and average_visual_score >= 12
-                and scores["logic_flow"] >= 13
+                and scores["logic_flow"] >= 15
                 and scores["accuracy_depth"] >= 13
-                and scores["learner_fit_zpd"] >= 13
+                and scores["learner_fit_zpd"] >= 15
                 and scores["unsupported_claim_count"] == 0
             )
-            is_good_enough = (prompt_decision or meets_threshold) and not hard_blockers and not critical_failures
+            pedagogy_gate_failed = (
+                scores["logic_flow"] < 15
+                or scores["learner_fit_zpd"] < 15
+                or scores["unsupported_claim_count"] > 0
+            )
+            is_good_enough = (prompt_decision or meets_threshold) and not pedagogy_gate_failed and not hard_blockers and not critical_failures
             if not reason and critical_failures:
                 reason = "; ".join(critical_failures)
 
@@ -2893,7 +2892,6 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
             self.generate_outline()
             self.generate_storyboard()
             self.inject_overview_section()
-            self.inject_cover_section()
             self.generate_codes()
             self._trim_sections_by_actual_tts_duration()
 
