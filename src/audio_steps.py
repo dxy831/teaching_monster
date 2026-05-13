@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from pydub import AudioSegment
 import imageio_ffmpeg
-
+from prompts.user_profile import UserProfile
 from src.gpt_request import cfg
 
 
@@ -22,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TTS_BASE_URL = "https://vip.dmxapi.com/v1"
 DEFAULT_TTS_MODEL = "tts-1"
 DEFAULT_TTS_VOICE = "alloy"
+LECTURE_PAGE_MAX_LINES = 9
 
 # 并发控制配置（可通过环境变量调整）
 LLM_EXPANSION_MAX_WORKERS = int(os.getenv("LLM_EXPANSION_MAX_WORKERS", "16"))
@@ -377,6 +378,31 @@ def reset_section_audio_dir(section_audio_dir: Path) -> Path:
     return section_audio_dir
 
 
+def _paginate_highlight_groups(section, highlight_groups: List[List[int]], page_max_lines: int = LECTURE_PAGE_MAX_LINES) -> List[List[dict]]:
+    pages: List[List[dict]] = []
+    current_page: List[dict] = []
+    current_line_count = 0
+
+    for highlight_indices in highlight_groups:
+        group_line_count = len(highlight_indices)
+        if current_page and current_line_count + group_line_count > page_max_lines:
+            pages.append(current_page)
+            current_page = []
+            current_line_count = 0
+
+        current_page.append({
+            "highlight_indices": list(highlight_indices),
+            "screen_texts": [section.lecture_lines[line_index] for line_index in highlight_indices],
+            "line_count": group_line_count,
+        })
+        current_line_count += group_line_count
+
+    if current_page:
+        pages.append(current_page)
+
+    return pages
+
+
 def build_section_steps(
     section,
     output_root: Path,
@@ -390,13 +416,32 @@ def build_section_steps(
     audio_dir = reset_section_audio_dir(output_root / "audio" / section.id)
     section_steps = []
     highlight_groups = getattr(section, "highlight_groups", None) or [[index] for index in range(len(section.lecture_lines))]
+    paged_groups = _paginate_highlight_groups(section, highlight_groups)
 
     # 批量扩展短句以减少 API 调用
     batch_expansions = []
-    for index, highlight_indices in enumerate(highlight_groups):
-        screen_texts = [section.lecture_lines[line_index] for line_index in highlight_indices]
-        combined_screen_text = " ".join(screen_texts)
-        batch_expansions.append((index, highlight_indices, screen_texts, combined_screen_text))
+    for page_index, page_groups in enumerate(paged_groups):
+        page_line_indices = [
+            line_index
+            for page_group in page_groups
+            for line_index in page_group["highlight_indices"]
+        ]
+        page_screen_texts = [section.lecture_lines[line_index] for line_index in page_line_indices]
+
+        for index_within_page, page_group in enumerate(page_groups):
+            screen_texts = list(page_group["screen_texts"])
+            combined_screen_text = " ".join(screen_texts)
+            batch_expansions.append(
+                {
+                    "page_index": page_index,
+                    "page_line_indices": page_line_indices,
+                    "page_screen_texts": page_screen_texts,
+                    "step_index_within_page": index_within_page,
+                    "highlight_indices": list(page_group["highlight_indices"]),
+                    "screen_texts": screen_texts,
+                    "combined_screen_text": combined_screen_text,
+                }
+            )
 
     # 并行调用 LLM 扩展（可通过环境变量 LLM_EXPANSION_MAX_WORKERS 调整）
     spoken_scripts = [None] * len(batch_expansions)
@@ -404,14 +449,14 @@ def build_section_steps(
         future_to_index = {
             executor.submit(
                 expand_screen_text_to_spoken_script,
-                combined_screen_text,
+                batch_expansion["combined_screen_text"],
                 api_func,
                 expansion_max_retries,
                 300,  # max_tokens
                 user_profile,
                 subject
             ): index
-            for index, (_, _, _, combined_screen_text) in enumerate(batch_expansions)
+            for index, batch_expansion in enumerate(batch_expansions)
         }
         for future in as_completed(future_to_index):
             index = future_to_index[future]
@@ -469,16 +514,20 @@ def build_section_steps(
         audio_results[idx] = path
 
     # 构建 section_steps
-    for (index, highlight_indices, screen_texts, _), spoken_script, audio_path in zip(batch_expansions, spoken_scripts, audio_results):
+    for (batch_expansion, spoken_script, audio_path) in zip(batch_expansions, spoken_scripts, audio_results):
         audio_duration = measure_audio_duration(audio_path)
         section_steps.append(
             {
-                "screen_text": screen_texts[0] if len(screen_texts) == 1 else "\n".join(screen_texts),
-                "screen_texts": screen_texts,
+                "screen_text": batch_expansion["screen_texts"][0] if len(batch_expansion["screen_texts"]) == 1 else "\n".join(batch_expansion["screen_texts"]),
+                "screen_texts": list(batch_expansion["screen_texts"]),
                 "spoken_script": spoken_script,
                 "audio_path": str(audio_path.resolve()),
                 "audio_duration": audio_duration,
-                "highlight_indices": list(highlight_indices),
+                "highlight_indices": list(batch_expansion["highlight_indices"]),
+                "page_index": batch_expansion["page_index"],
+                "page_line_indices": list(batch_expansion["page_line_indices"]),
+                "page_screen_texts": list(batch_expansion["page_screen_texts"]),
+                "step_index_within_page": batch_expansion["step_index_within_page"],
             }
         )
 

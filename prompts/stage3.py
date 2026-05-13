@@ -363,22 +363,21 @@ def get_prompt3_code(
     ```
 
      **【⚠️ Lecture text batch display - Hard rules】**
-     - **🔴 Character limit per line**: Each line of lecture text should not exceed **8 English words** (including punctuation, letters, numbers) to fit on one line, no need to deliberately shorten. Only when exceeding 8 words should you split by semantic meaning into multiple lines. **Don't forcibly split a complete short sentence into two lines! If a sentence can be said within 8 words, put it on one line.** Text exceeding 8 words will invade the right-side animation area causing overlap!
+     - **🔴 Character limit per line**: Each line of lecture text should not exceed **43 characters** (including letters, punctuation, numbers, and spaces). Only when exceeding 43 characters should you split by semantic meaning into multiple lines. **Don't forcibly split a complete short sentence into two lines! If a sentence fits within 43 characters, keep it on one line.** Text exceeding 43 characters will invade the right-side animation area causing overlap!
 
      ### 🔴🔴🔴 Batching Core Rules (Most error-prone! Must strictly follow!) 🔴🔴🔴
 
-     **All sections use max 8 lines per batch** (pure lecture + right-side animation)
+     **All sections use max 9 lecture lines per page** (pure lecture + right-side animation)
 
      **Execution order (must execute in order, cannot skip steps):**
-     1. **Batch by semantic completeness (more important than line limit!):**
-         - **Same knowledge point can span multiple batches** (recommended 2-4 batches, adaptive by duration), but cannot mix with next knowledge point in same batch
-         - **Different knowledge points cannot be forced into same batch**
-         - If a knowledge point has only 2 lines, just display 2 lines; if it has 6 lines, display 6 lines
-         - **Strictly forbidden to mechanically fill every batch to 8 lines!**
-         - **Special emphasis: Must batch by semantic completeness, cannot template-split by fixed line count.**
-     2. **Finally check if exceeding the scene limit (8 lines)**
-         - If not exceeded: Keep knowledge point complete, no extra splitting
-         - If exceeded: Only split within that knowledge point by natural semantic breakpoints, **forbidden to cross knowledge points to pad line count**
+     1. **Page by simultaneously highlighted groups (more important than line limit!):**
+         - Treat each step's `highlight_indices` group as one atomic unit for pagination
+         - If adding the next highlighted group would exceed 9 lines on the current page, move that whole group to the next page
+         - **Strictly forbidden to split one simultaneously highlighted group across two pages**
+         - **Strictly forbidden to mechanically fill every page to 9 lines!**
+     2. **Finally check if exceeding the scene limit (9 lines)**
+         - If not exceeded: Keep the current page as-is
+         - If exceeded: Switch the whole highlighted group to the next page before calling `play_synced_step()`
 
     - **Top-left alignment**: Lecture text must `.next_to(title, DOWN, buff=0.5).to_edge(LEFT, buff=0.3)`, starting from **top-left corner**, **strictly forbidden to center on Y-axis**
     - **Fixed position**: When first batch appears, record `lecture_pos = self.lecture.get_corner(UL)`, subsequent batches use `.align_to(lecture_pos, UL)` to maintain top-left alignment
@@ -483,14 +482,12 @@ def get_prompt3_code(
     class {section.id.title().replace('_', '')}Scene(TeachingScene):
         def construct(self):
             steps = {section_steps}
-            current_batch = steps[:8]
-            screen_texts = [step["screen_text"] for step in current_batch]
-            current_batch_indices = []
-            for step in current_batch:
-                current_batch_indices.extend(step["highlight_indices"])
+            first_page_steps = [step for step in steps if step["page_index"] == 0]
+            screen_texts = first_page_steps[0]["page_screen_texts"] if first_page_steps else []
+            current_page_indices = first_page_steps[0]["page_line_indices"] if first_page_steps else []
 
             # 🔴🔴🔴 First line must call setup_layout()! Set background color and basic layout 🔴🔴🔴
-            self.setup_layout("{section.title}", screen_texts, lecture_line_indices=current_batch_indices)
+            self.setup_layout("{section.title}", screen_texts, lecture_line_indices=current_page_indices)
 
             # 1. Diagrams and visual elements (NO code blocks for any subject)
             # Use MathTex for formulas, Text for labels, Arrow/Line for relationships
@@ -536,21 +533,19 @@ def get_prompt3_code(
                 Indicate(formula, color=YELLOW)
             )
 
-            # If narration exceeds current batch, must switch left-side lecture text first
-            if len(steps) > 8:
-                next_batch = steps[8:16]
-                next_batch_indices = []
-                for step in next_batch:
-                    next_batch_indices.extend(step["highlight_indices"])
-                self.replace_lecture_lines(
-                    [step["screen_text"] for step in next_batch],
-                    lecture_line_indices=next_batch_indices,
-                )
-                self.play_synced_step(
-                    next_batch[0]["highlight_indices"],
-                    next_batch[0]["audio_path"],
-                    next_batch[0]["audio_duration"]
-                )
+            # If the next step is on a new page, must switch left-side lecture text first
+            if len(steps) > 9:
+                next_page = [step for step in steps if step["page_index"] == 1]
+                if next_page:
+                    self.replace_lecture_lines(
+                        next_page[0]["page_screen_texts"],
+                        lecture_line_indices=next_page[0]["page_line_indices"],
+                    )
+                    self.play_synced_step(
+                        next_page[0]["highlight_indices"],
+                        next_page[0]["audio_path"],
+                        next_page[0]["audio_duration"]
+                    )
             self.wait(2)
     ```
 
@@ -713,7 +708,7 @@ def get_prompt3_code(
     2. Special check all lecture lines: If line text contains `O(`/`log`/`²`/`₂`/`ₙ`/`^`/`=`/`≤`/`≥`/`✓`/`✗`, forbidden to use entire sentence `Text(line, ...)`, must change to Text + MathTex mixed layout (focus on checking `log₂n`)
     3. Check if every narration calls `play_synced_step`
     4. Check if manual `self.wait(x)` is incorrectly written inside narration segments to replace `audio_duration`
-    5. Check if each line of lecture text exceeds 8 English words, if exceeded then split lines (short sentences within 8 words should not be forcibly split)
+    5. Check if each line of lecture text exceeds 43 characters, if exceeded then split lines (short sentences within 43 characters should not be forcibly split)
     6. Check if lecture text batching is split by semantics, different knowledge points cannot be mixed in same batch
     7. Check if right side has "**large graphics + right-side text annotation coexisting**" situation; if so, must delete right-side text or switch scene first then display
     8. Special check first batch lines of `self.setup_layout(..., lecture_lines)`: If contains `O(` / `log` / `²` / `₂` / `ₙ` / `^` / `=` / `≤` / `≥`, must rewrite as pure English description, and move formula to right-side `MathTex`

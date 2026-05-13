@@ -156,6 +156,17 @@ def get_prompt2_storyboard(
         - **Interactive pause points (optional but recommended)**: Before revealing the solution to a worked example, consider adding a lecture_line like "Pause the video here and try it yourself" or "Can you figure out what happens next?" with the corresponding animation showing the problem setup. This activates retrieval practice and improves learning retention.
         - **Concept-before-example rule**: Always introduce the concept definition or principle FIRST, then follow with the worked example. Never show an example before explaining what concept it demonstrates.
         - **Motivation-before-definition rule**: Before defining a new concept, provide a 1-sentence motivation explaining WHY this concept is useful or what problem it solves. This helps the learner understand the purpose before diving into details.
+        - Respect the outline's `prior_knowledge_activation`, `new_concept`, `evidence_basis`, and `bridge_to_next` fields when writing lecture lines.
+        - The first lecture line MUST realize the outline's prior-knowledge activation in learner-appropriate language.
+        - Each section MUST include at least one lecture line that states why the key claim is valid, based on a definition, law, theorem, experiment, or worked-example rule.
+        - The section's vocabulary must stay within the learner profile's `max_new_terms_per_section` and avoid `forbidden_jargon` unless immediately explained.
+
+    7.  **Traceability Requirements (MANDATORY)**:
+        - Each section must include `evidence_lines_indices` listing the lecture line indices that state evidence, justification, or source principles.
+        - Each section must include `zpd_check_line_index` pointing to the lecture line that activates prior knowledge.
+        - Each section must include `bridge_line_index` pointing to the lecture line that bridges to the next idea or next section.
+        - Each section must include `new_terms_introduced`, listing only the genuinely new technical terms introduced in that section.
+        - `new_terms_introduced` must be short, learner-level-appropriate, and consistent with the single `new_concept` for the section.
 
     ## Input Outline
     {outline}
@@ -175,6 +186,10 @@ def get_prompt2_storyboard(
                     "Second narration line"
                 ],
                 "highlight_groups": [[0], [1]],
+                "evidence_lines_indices": [1],
+                "zpd_check_line_index": 0,
+                "bridge_line_index": 1,
+                "new_terms_introduced": ["example term"],
                 "animations": [
                     "Define Visual Layout: Left-Right Split.",
                     "Visual: FadeIn title at top.",
@@ -191,6 +206,10 @@ def get_prompt2_storyboard(
                     "Explanation step 3"
                 ],
                 "highlight_groups": [[0], [1, 2]],
+                "evidence_lines_indices": [1, 2],
+                "zpd_check_line_index": 0,
+                "bridge_line_index": 2,
+                "new_terms_introduced": ["key term", "second term"],
                 "animations": [
                     "Define Visual Layout: Left-Right Split for lecture and visuals.",
                     "Visual: Create labeled diagram showing key structure.",

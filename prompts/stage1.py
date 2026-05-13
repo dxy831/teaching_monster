@@ -193,8 +193,24 @@ def get_prompt1_outline(
         - Each section should introduce exactly ONE core new concept — do not pack multiple new ideas into one section.
         - Examples and analogies must be calibrated to the learner profile's level — avoid cross-level jumps.
         - The last content section should include a "forward connection" that hints how this topic leads to the next concept.
+        - Respect the learner profile's `known_concepts`, `forbidden_jargon`, `must_master_outcomes`, and `likely_misconceptions` when choosing section content.
+        - If a technical claim cannot be tied to a definition, law, theorem, experiment, or textbook-standard rule, do not include it.
 
-    6.  **Ending Structure Requirements (Strict Ending Structure)**:
+    6.  **Structured Evidence & Scaffolding Requirements (MANDATORY)**:
+        - Every section MUST declare exactly one `learning_objective` and exactly one `new_concept`.
+        - Every section MUST include `prior_knowledge_activation` explaining what earlier idea the learner can rely on.
+        - Every section MUST include `evidence_basis`, a non-empty list of factual supports. Each item must contain:
+          - `claim`: the exact fact, formula, or conclusion being taught
+          - `source_type`: one of `definition`, `law`, `theorem`, `experiment`, `textbook_rule`, `worked_example`
+          - `anchor`: the matching factuality anchor, named principle, or accepted scientific/mathematical rule
+        - If a section contains a factual statement without a suitable `evidence_basis`, remove that statement instead of guessing.
+        - Every section MUST include `misconception_check` describing the most likely learner misunderstanding to prevent.
+        - Every non-final section MUST include `bridge_to_next` that explains why the next section is the natural next step.
+        - Any worked example must explicitly name which prior definition, law, theorem, or rule justifies the setup.
+        - No required section field may be an empty string, whitespace-only string, empty array, null, or omitted.
+        - Before returning JSON, verify every section contains non-empty values for `id`, `title`, `content`, `learning_objective`, `prior_knowledge_activation`, `new_concept`, `misconception_check`, `bridge_to_next`, `estimated_duration`, and at least one complete `evidence_basis` item.
+
+    7.  **Ending Structure Requirements (Strict Ending Structure)**:
         - Second-to-last section: summary and key review only.
         - Last section:
           - **All subjects**: Final recap sheet with key formulas, core concepts summary, process map, or decision flowchart
@@ -223,17 +239,50 @@ def get_prompt1_outline(
         "difficulty_level": "{difficulty_field_instruction}",
         "data_case_definition": "Define the teaching case, phenomenon, or worked example in detail",
         "algorithm_components": ["List tracked concepts, variables, formulas, structures, or stages"],
+        "factuality_anchor_checklist": ["List the anchors actually used in the lesson"],
+        "scaffold_map": [
+            {{
+                "section_id": "section_0_intro",
+                "prior_knowledge": "What the learner already knows before this section",
+                "target_concept": "What this section helps the learner understand next",
+                "bridge_strategy": "How the section moves from prior knowledge to the new idea"
+            }}
+        ],
         "sections": [
             {{
                 "id": "section_0_intro",
                 "title": "Scene Introduction",
                 "content": "Real-life or classroom introduction that motivates the topic.",
+                "learning_objective": "Activate a familiar idea and motivate the new topic",
+                "prior_knowledge_activation": "State the specific prior knowledge the learner already has",
+                "new_concept": "The one new idea introduced in this section",
+                "evidence_basis": [
+                    {{
+                        "claim": "The exact fact or conclusion taught in this section",
+                        "source_type": "definition",
+                        "anchor": "Named law, definition, theorem, experiment, or textbook-standard rule"
+                    }}
+                ],
+                "misconception_check": "Most likely misunderstanding to prevent in this section",
+                "bridge_to_next": "Why the next section is the natural next step",
                 "estimated_duration": 30
             }},
             {{
                 "id": "section_1",
                 "title": "Core Concept",
                 "content": "Introduce the main concept and key mechanism.",
+                "learning_objective": "State the single measurable learning goal of this section",
+                "prior_knowledge_activation": "Connect this section to a concept the learner already knows",
+                "new_concept": "Exactly one core new concept",
+                "evidence_basis": [
+                    {{
+                        "claim": "The exact fact or conclusion taught in this section",
+                        "source_type": "law",
+                        "anchor": "Named law, definition, theorem, experiment, or textbook-standard rule"
+                    }}
+                ],
+                "misconception_check": "Most likely misunderstanding to prevent in this section",
+                "bridge_to_next": "How this section prepares the learner for the next one",
                 "estimated_duration": 45
             }}
         ]

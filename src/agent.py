@@ -52,7 +52,7 @@ from src.overview_scene import (
 )
 from src.cover_scene import generate_cover_manim_code
 
-LECTURE_LINE_MAX_WORDS = 8
+LECTURE_LINE_MAX_CHARS = 43
 LECTURE_LINE_SPLIT_MAX_RETRIES = 2
 LECTURE_LINE_SPLIT_PROMPT = """
 You rewrite educational lecture lines for on-screen display.
@@ -62,8 +62,8 @@ Task:
 - Split each input lecture line into one or more shorter on-screen lines.
 - Preserve the original meaning and original order.
 - Keep the wording natural and readable for an educational video.
-- Each output line must contain at most {max_words} English words.
-- If an input line already has {max_words} words or fewer, keep it unchanged.
+- Each output line must contain at most {max_chars} characters, counting letters, punctuation, digits, and spaces.
+- If an input line already has {max_chars} characters or fewer, keep it unchanged.
 - Split by semantic meaning, not by arbitrary fixed chunks.
 - Do not merge two different input lines together.
 - Do not drop information.
@@ -97,6 +97,10 @@ class Section:
     animations: List[str]
     estimated_duration: Optional[int] = None  # 预计时长（秒）
     highlight_groups: Optional[List[List[int]]] = None
+    evidence_lines_indices: Optional[List[int]] = None
+    zpd_check_line_index: Optional[int] = None
+    bridge_line_index: Optional[int] = None
+    new_terms_introduced: Optional[List[str]] = None
 
 
 @dataclass
@@ -104,6 +108,9 @@ class TeachingOutline:
     topic: str
     target_audience: str
     sections: List[Dict[str, Any]]
+    factuality_anchor_checklist: Optional[List[str]] = None
+    scaffold_map: Optional[List[Dict[str, Any]]] = None
+    difficulty_level: Optional[str] = None
 
 
 @dataclass
@@ -219,6 +226,9 @@ class TeachingVideoAgent:
                 topic=outline_data["topic"],
                 target_audience=outline_data["target_audience"],
                 sections=outline_data["sections"],
+                factuality_anchor_checklist=outline_data.get("factuality_anchor_checklist"),
+                scaffold_map=outline_data.get("scaffold_map"),
+                difficulty_level=outline_data.get("difficulty_level"),
             )
         self.enhanced_storyboard = None
         self.sections = []
@@ -558,8 +568,8 @@ Do not include quotes or extra explanation.
         return normalized_groups
 
     @staticmethod
-    def _count_lecture_line_words(text: str) -> int:
-        return len(re.findall(r"\S+", (text or "").strip()))
+    def _count_lecture_line_chars(text: str) -> int:
+        return len((text or "").strip())
 
     @classmethod
     def _validate_split_lecture_parts(cls, original_lines: List[str], split_payload: Any) -> Optional[List[List[str]]]:
@@ -587,7 +597,7 @@ Do not include quotes or extra explanation.
                 normalized = " ".join(part.strip().split())
                 if not normalized:
                     return None
-                if cls._count_lecture_line_words(normalized) > LECTURE_LINE_MAX_WORDS:
+                if cls._count_lecture_line_chars(normalized) > LECTURE_LINE_MAX_CHARS:
                     return None
                 normalized_parts.append(normalized)
 
@@ -600,20 +610,40 @@ Do not include quotes or extra explanation.
 
     @classmethod
     def _fallback_split_lecture_lines(cls, lecture_lines: List[str]) -> Tuple[List[str], List[List[int]]]:
+        def split_line(line: str) -> List[str]:
+            normalized_line = " ".join(line.strip().split())
+            if not normalized_line:
+                return []
+
+            parts: List[str] = []
+            remaining = normalized_line
+            while remaining:
+                if cls._count_lecture_line_chars(remaining) <= LECTURE_LINE_MAX_CHARS:
+                    parts.append(remaining)
+                    break
+
+                split_at = remaining.rfind(" ", 0, LECTURE_LINE_MAX_CHARS + 1)
+                if split_at <= 0:
+                    parts.append(remaining[:LECTURE_LINE_MAX_CHARS].strip())
+                    remaining = remaining[LECTURE_LINE_MAX_CHARS:].strip()
+                    continue
+
+                parts.append(remaining[:split_at].strip())
+                remaining = remaining[split_at + 1 :].strip()
+
+            return [part for part in parts if part]
+
         rewritten_lines: List[str] = []
         source_to_new_indices: List[List[int]] = []
         for line in lecture_lines:
-            tokens = re.findall(r"\S+", line)
-            if not tokens:
+            parts = split_line(line)
+            if not parts:
                 continue
             new_indices: List[int] = []
-            for start in range(0, len(tokens), LECTURE_LINE_MAX_WORDS):
-                chunk = " ".join(tokens[start:start + LECTURE_LINE_MAX_WORDS]).strip()
-                if not chunk:
-                    continue
+            for part in parts:
                 new_indices.append(len(rewritten_lines))
-                rewritten_lines.append(chunk)
-            source_to_new_indices.append(new_indices or [len(rewritten_lines)])
+                rewritten_lines.append(part)
+            source_to_new_indices.append(new_indices)
         return rewritten_lines, source_to_new_indices
 
     def _split_lecture_lines_with_ai(self, lecture_lines: List[str]) -> Tuple[List[str], List[List[int]]]:
@@ -622,11 +652,11 @@ Do not include quotes or extra explanation.
             return [], []
 
         default_mapping = [[index] for index in range(len(normalized_source_lines))]
-        if all(self._count_lecture_line_words(line) <= LECTURE_LINE_MAX_WORDS for line in normalized_source_lines):
+        if all(self._count_lecture_line_chars(line) <= LECTURE_LINE_MAX_CHARS for line in normalized_source_lines):
             return normalized_source_lines, default_mapping
 
         prompt = LECTURE_LINE_SPLIT_PROMPT.format(
-            max_words=LECTURE_LINE_MAX_WORDS,
+            max_chars=LECTURE_LINE_MAX_CHARS,
             lecture_lines_json=json.dumps(normalized_source_lines, ensure_ascii=False, indent=2),
         )
 
@@ -703,11 +733,11 @@ Use these rules when deciding:
 
 Example:
 - Simple topic + strong foundation -> choose a shorter duration, such as 2 or 3 minutes.
-- More complex topic + weaker foundation -> choose a longer duration, such as 4 or 5 minutes.
+- More complex topic + weaker foundation -> choose a longer duration, such as 5 or 6 minutes.
 
 Constraints:
 - Must be an integer
-- Must be between 3 and 7 inclusive
+- Must be between 3 and 6 inclusive
 
 Return only one integer number.
 """
@@ -717,7 +747,7 @@ Return only one integer number.
         if not match:
             return 4
         value = int(match.group(0))
-        if value < 3 or value > 7:
+        if value < 3 or value > 6:
             return 4
         return value
 
@@ -728,7 +758,7 @@ Return only one integer number.
             selected = self._select_duration_with_ai()
         except Exception:
             selected = 4
-        if selected < 3 or selected > 7:
+        if selected < 3 or selected > 6:
             selected = 4
         self.duration = selected
         self._ai_duration_selected = True
@@ -738,6 +768,604 @@ Return only one integer number.
         if isinstance(section.estimated_duration, (int, float)) and section.estimated_duration > 0:
             return int(section.estimated_duration)
         return 30
+
+    @staticmethod
+    def _coerce_non_empty_str(value: Any) -> str:
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                return normalized
+        raise ValueError("Expected a non-empty string")
+
+    @staticmethod
+    def _coerce_string_list(value: Any, field_name: str, allow_empty: bool = True) -> List[str]:
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list")
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        if not allow_empty and not normalized:
+            raise ValueError(f"{field_name} must not be empty")
+        return normalized
+
+    @staticmethod
+    def _extract_outline_json(text: str) -> str:
+        return extract_json_from_markdown(text)
+
+    def _build_outline_retry_prompt(self, base_prompt: str, raw_content: str, violations: List[str]) -> str:
+        violations_json = json.dumps(violations, ensure_ascii=False, indent=2)
+        return (
+            f"{base_prompt}\n\n"
+            "The previous outline output was rejected by runtime validation.\n"
+            "Fix the violations below and regenerate the FULL JSON outline.\n"
+            "Do not explain anything. Return JSON only.\n\n"
+            f"Validation violations:\n{violations_json}\n\n"
+            f"Previous output:\n{raw_content}"
+        )
+
+    @staticmethod
+    def _clip_fallback_text(value: str, limit: int = 160) -> str:
+        normalized = " ".join(str(value or "").split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 3].rstrip() + "..."
+
+    def _fallback_outline_string(self, field_name: str, section: Dict[str, Any], index: int, sections: List[Dict[str, Any]]) -> str:
+        title = self._clip_fallback_text(section.get("title") or f"Section {index + 1}", 80)
+        content = self._clip_fallback_text(section.get("content") or title, 160)
+        next_title = ""
+        if index + 1 < len(sections) and isinstance(sections[index + 1], dict):
+            next_title = self._clip_fallback_text(sections[index + 1].get("title") or "the next section", 80)
+
+        fallbacks = {
+            "id": f"section_{index}",
+            "title": f"Section {index + 1}",
+            "content": title,
+            "learning_objective": f"Understand the key idea in {title}.",
+            "prior_knowledge_activation": f"Recall the basic idea related to {title} before learning this part.",
+            "new_concept": title,
+            "misconception_check": f"Do not confuse {title} with a different but similar idea.",
+            "bridge_to_next": (
+                f"This section prepares the learner for {next_title}." if next_title else "This section prepares the learner for the next idea."
+            ),
+        }
+        if field_name == "content" and content:
+            return content
+        return fallbacks[field_name]
+
+    def _fallback_evidence_basis(self, section: Dict[str, Any], index: int) -> List[Dict[str, str]]:
+        claim_source = section.get("content") or section.get("title") or f"section {index + 1}"
+        claim = self._clip_fallback_text(claim_source, 160) or f"Key point from section {index + 1}"
+        anchor = self._clip_fallback_text(section.get("new_concept") or section.get("title") or "the lesson concept", 120)
+        return [
+            {
+                "claim": claim,
+                "source_type": "textbook_rule",
+                "anchor": f"Use textbook-standard explanation for {anchor}.",
+            }
+        ]
+
+    def _apply_outline_fallbacks(
+        self,
+        outline_data: Dict[str, Any],
+        violations: List[str],
+    ) -> Tuple[Dict[str, Any], List[str]]:
+        degraded = json.loads(json.dumps(outline_data or {}, ensure_ascii=False))
+        fallback_notes: List[str] = []
+
+        if not isinstance(degraded, dict):
+            degraded = {}
+            fallback_notes.append("outline root replaced with empty object before fallback")
+
+        for field_name in ["topic", "target_audience"]:
+            try:
+                degraded[field_name] = self._coerce_non_empty_str(degraded.get(field_name))
+            except ValueError:
+                if field_name == "topic":
+                    degraded[field_name] = self.learning_topic
+                else:
+                    degraded[field_name] = f"Learners studying {self.learning_topic}"
+                fallback_notes.append(f"filled top-level field '{field_name}'")
+
+        scaffold_map = degraded.get("scaffold_map")
+        if not isinstance(scaffold_map, list) or not scaffold_map:
+            degraded["scaffold_map"] = [
+                {
+                    "section_id": "section_0_intro",
+                    "prior_knowledge": f"Learners already know something related to {self.learning_topic}.",
+                    "target_concept": f"Build understanding of {self.learning_topic}.",
+                    "bridge_strategy": "Move from familiar intuition to the new idea step by step.",
+                }
+            ]
+            fallback_notes.append("replaced empty scaffold_map with default scaffold")
+
+        sections = degraded.get("sections")
+        if not isinstance(sections, list):
+            sections = []
+            degraded["sections"] = sections
+        if not sections:
+            sections.append(
+                {
+                    "id": "section_0_intro",
+                    "title": self.learning_topic,
+                    "content": f"Introduce {self.learning_topic}.",
+                    "estimated_duration": max(1, int((self.duration * 60) / 1.4)),
+                }
+            )
+            fallback_notes.append("created fallback section because sections was empty")
+
+        required_string_fields = [
+            "id",
+            "title",
+            "content",
+            "learning_objective",
+            "prior_knowledge_activation",
+            "new_concept",
+            "misconception_check",
+            "bridge_to_next",
+        ]
+
+        for index, raw_section in enumerate(sections):
+            if not isinstance(raw_section, dict):
+                raw_section = {}
+                sections[index] = raw_section
+                fallback_notes.append(f"replaced sections[{index}] with empty object before fallback")
+
+            for field_name in required_string_fields:
+                try:
+                    raw_section[field_name] = self._coerce_non_empty_str(raw_section.get(field_name))
+                except ValueError:
+                    raw_section[field_name] = self._fallback_outline_string(field_name, raw_section, index, sections)
+                    fallback_notes.append(f"filled sections[{index}].{field_name}")
+
+            evidence_basis = raw_section.get("evidence_basis")
+            normalized_evidence: List[Dict[str, str]] = []
+            if isinstance(evidence_basis, list):
+                for evidence_item in evidence_basis:
+                    if not isinstance(evidence_item, dict):
+                        continue
+                    claim = str(evidence_item.get("claim") or "").strip()
+                    source_type = str(evidence_item.get("source_type") or "").strip()
+                    anchor = str(evidence_item.get("anchor") or "").strip()
+                    if claim and source_type and anchor:
+                        normalized_evidence.append(
+                            {"claim": claim, "source_type": source_type, "anchor": anchor}
+                        )
+            if not normalized_evidence:
+                normalized_evidence = self._fallback_evidence_basis(raw_section, index)
+                fallback_notes.append(f"filled sections[{index}].evidence_basis")
+            raw_section["evidence_basis"] = normalized_evidence
+
+            estimated_duration = raw_section.get("estimated_duration")
+            if not isinstance(estimated_duration, int) or estimated_duration <= 0:
+                raw_section["estimated_duration"] = max(20, int((self.duration * 60) / max(1, len(sections) * 2)))
+                fallback_notes.append(f"filled sections[{index}].estimated_duration")
+
+        normalized_outline, remaining_violations = self._validate_outline_data(degraded)
+        if remaining_violations:
+            raise ValueError(
+                "Outline fallback could not recover invalid data: " + "; ".join(remaining_violations)
+            )
+
+        if fallback_notes:
+            print("⚠️ 大纲结构二次失败，已降级补齐字段继续执行: " + "; ".join(fallback_notes))
+        elif violations:
+            print("⚠️ 大纲结构二次失败，但规范化后已可继续执行")
+        return normalized_outline, fallback_notes
+
+    def _build_storyboard_fallback_line(self, section: Dict[str, Any], index: int) -> str:
+        title = self._clip_fallback_text(section.get("title") or f"Section {index + 1}", 80)
+        return f"We now focus on {title}."
+
+    def _apply_storyboard_fallbacks(
+        self,
+        storyboard_data: Dict[str, Any],
+        violations: List[str],
+    ) -> Tuple[Dict[str, Any], List[str]]:
+        degraded = json.loads(json.dumps(storyboard_data or {}, ensure_ascii=False))
+        fallback_notes: List[str] = []
+
+        sections = degraded.get("sections")
+        if not isinstance(sections, list):
+            sections = []
+            degraded["sections"] = sections
+        if not sections:
+            sections.append(
+                {
+                    "id": "section_0_intro",
+                    "title": self.learning_topic,
+                    "lecture_lines": [f"This lesson introduces {self.learning_topic}."],
+                    "animations": ["Visual: Display the lesson title and a simple supporting diagram."],
+                    "estimated_duration": 30,
+                }
+            )
+            fallback_notes.append("created fallback storyboard section because sections was empty")
+
+        for index, raw_section in enumerate(sections):
+            if not isinstance(raw_section, dict):
+                raw_section = {}
+                sections[index] = raw_section
+                fallback_notes.append(f"replaced storyboard sections[{index}] with empty object before fallback")
+
+            raw_section["id"] = str(raw_section.get("id") or f"section_{index}").strip() or f"section_{index}"
+            title = str(raw_section.get("title") or "").strip()
+            if not title:
+                title = f"Section {index + 1}"
+                raw_section["title"] = title
+                fallback_notes.append(f"filled storyboard sections[{index}].title")
+            else:
+                raw_section["title"] = title
+
+            lecture_lines = raw_section.get("lecture_lines")
+            if not isinstance(lecture_lines, list):
+                lecture_lines = []
+            lecture_lines = [str(line).strip() for line in lecture_lines if str(line).strip()]
+            if not lecture_lines:
+                lecture_lines = [self._build_storyboard_fallback_line(raw_section, index)]
+                fallback_notes.append(f"filled storyboard sections[{index}].lecture_lines")
+            raw_section["lecture_lines"] = lecture_lines
+
+            animations = raw_section.get("animations")
+            if not isinstance(animations, list):
+                animations = []
+            animations = [str(item).strip() for item in animations if str(item).strip()]
+            if not animations:
+                animations = [f"Visual: Highlight the key idea in {title} with clear labels."]
+                fallback_notes.append(f"filled storyboard sections[{index}].animations")
+            raw_section["animations"] = animations
+
+            estimated_duration = raw_section.get("estimated_duration")
+            if not isinstance(estimated_duration, int) or estimated_duration <= 0:
+                raw_section["estimated_duration"] = max(15, len(lecture_lines) * 6)
+                fallback_notes.append(f"filled storyboard sections[{index}].estimated_duration")
+
+            raw_section["highlight_groups"] = self._build_default_highlight_groups(lecture_lines)
+            raw_section["evidence_lines_indices"] = [min(1, len(lecture_lines) - 1)]
+            raw_section["zpd_check_line_index"] = 0
+            raw_section["bridge_line_index"] = len(lecture_lines) - 1
+
+            new_terms = raw_section.get("new_terms_introduced")
+            if not isinstance(new_terms, list):
+                new_terms = []
+            raw_section["new_terms_introduced"] = [str(item).strip() for item in new_terms if str(item).strip()][: self._max_new_terms_per_section()]
+
+        normalized_storyboard, remaining_violations, _ = self._validate_storyboard_data(degraded)
+        if remaining_violations:
+            raise ValueError(
+                "Storyboard fallback could not recover invalid data: " + "; ".join(remaining_violations)
+            )
+
+        if fallback_notes:
+            print("⚠️ 分镜结构二次失败，已降级补齐字段继续执行: " + "; ".join(fallback_notes))
+        elif violations:
+            print("⚠️ 分镜结构二次失败，但规范化后已可继续执行")
+        return normalized_storyboard, fallback_notes
+
+    def _validate_outline_data(self, outline_data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+        violations: List[str] = []
+        normalized: Dict[str, Any] = {}
+
+        try:
+            normalized["topic"] = self._coerce_non_empty_str(outline_data.get("topic"))
+        except ValueError:
+            violations.append("top-level field 'topic' must be a non-empty string")
+
+        try:
+            normalized["target_audience"] = self._coerce_non_empty_str(outline_data.get("target_audience"))
+        except ValueError:
+            violations.append("top-level field 'target_audience' must be a non-empty string")
+
+        try:
+            normalized["factuality_anchor_checklist"] = self._coerce_string_list(
+                outline_data.get("factuality_anchor_checklist"),
+                "factuality_anchor_checklist",
+                allow_empty=True,
+            )
+        except ValueError as exc:
+            violations.append(str(exc))
+
+        scaffold_map = outline_data.get("scaffold_map")
+        if not isinstance(scaffold_map, list) or not scaffold_map:
+            violations.append("top-level field 'scaffold_map' must be a non-empty list")
+            normalized["scaffold_map"] = []
+        else:
+            normalized_scaffold_map: List[Dict[str, str]] = []
+            for index, item in enumerate(scaffold_map):
+                if not isinstance(item, dict):
+                    violations.append(f"scaffold_map[{index}] must be an object")
+                    continue
+                try:
+                    normalized_scaffold_map.append(
+                        {
+                            "section_id": self._coerce_non_empty_str(item.get("section_id")),
+                            "prior_knowledge": self._coerce_non_empty_str(item.get("prior_knowledge")),
+                            "target_concept": self._coerce_non_empty_str(item.get("target_concept")),
+                            "bridge_strategy": self._coerce_non_empty_str(item.get("bridge_strategy")),
+                        }
+                    )
+                except ValueError:
+                    violations.append(
+                        f"scaffold_map[{index}] must contain non-empty section_id, prior_knowledge, target_concept, and bridge_strategy"
+                    )
+            normalized["scaffold_map"] = normalized_scaffold_map
+
+        difficulty_level = outline_data.get("difficulty_level")
+        if difficulty_level is not None:
+            try:
+                normalized["difficulty_level"] = self._coerce_non_empty_str(difficulty_level)
+            except ValueError:
+                violations.append("top-level field 'difficulty_level' must be a non-empty string when present")
+        elif self.forced_difficulty_level:
+            violations.append("top-level field 'difficulty_level' must be present when forced_difficulty_level is set")
+            normalized["difficulty_level"] = self.forced_difficulty_level
+
+        if self.forced_difficulty_level:
+            actual_difficulty = str(outline_data.get("difficulty_level", "")).strip().lower()
+            expected_difficulty = str(self.forced_difficulty_level).strip().lower()
+            if actual_difficulty != expected_difficulty:
+                violations.append(
+                    f"difficulty_level must equal forced_difficulty_level '{self.forced_difficulty_level}'"
+                )
+
+        sections = outline_data.get("sections")
+        if not isinstance(sections, list):
+            violations.append("top-level field 'sections' must be a list")
+            sections = []
+
+        if not (6 <= len(sections) <= 9):
+            violations.append("sections must contain 6 to 9 items")
+
+        normalized_sections: List[Dict[str, Any]] = []
+        total_duration = 0
+        for index, section in enumerate(sections):
+            if not isinstance(section, dict):
+                violations.append(f"sections[{index}] must be an object")
+                continue
+            normalized_section: Dict[str, Any] = {}
+            required_string_fields = [
+                "id",
+                "title",
+                "content",
+                "learning_objective",
+                "prior_knowledge_activation",
+                "new_concept",
+                "misconception_check",
+                "bridge_to_next",
+            ]
+            for field_name in required_string_fields:
+                try:
+                    normalized_section[field_name] = self._coerce_non_empty_str(section.get(field_name))
+                except ValueError:
+                    violations.append(f"sections[{index}].{field_name} must be a non-empty string")
+
+            evidence_basis = section.get("evidence_basis")
+            if not isinstance(evidence_basis, list) or not evidence_basis:
+                violations.append(f"sections[{index}].evidence_basis must be a non-empty list")
+                normalized_section["evidence_basis"] = []
+            else:
+                normalized_evidence_basis = []
+                for evidence_index, evidence_item in enumerate(evidence_basis):
+                    if not isinstance(evidence_item, dict):
+                        violations.append(
+                            f"sections[{index}].evidence_basis[{evidence_index}] must be an object"
+                        )
+                        continue
+                    try:
+                        normalized_evidence_basis.append(
+                            {
+                                "claim": self._coerce_non_empty_str(evidence_item.get("claim")),
+                                "source_type": self._coerce_non_empty_str(evidence_item.get("source_type")),
+                                "anchor": self._coerce_non_empty_str(evidence_item.get("anchor")),
+                            }
+                        )
+                    except ValueError:
+                        violations.append(
+                            f"sections[{index}].evidence_basis[{evidence_index}] must contain non-empty claim, source_type, and anchor"
+                        )
+                normalized_section["evidence_basis"] = normalized_evidence_basis
+
+            estimated_duration = section.get("estimated_duration")
+            if not isinstance(estimated_duration, int) or estimated_duration <= 0:
+                violations.append(f"sections[{index}].estimated_duration must be a positive integer")
+            else:
+                normalized_section["estimated_duration"] = estimated_duration
+                total_duration += estimated_duration
+
+            normalized_sections.append(normalized_section)
+
+        target_seconds = int((self.duration * 60) / 1.4)
+        allowed_delta = max(20, int(target_seconds * 0.25))
+        if sections and abs(total_duration - target_seconds) > allowed_delta:
+            violations.append(
+                f"sum of estimated_duration must stay near {target_seconds} seconds (got {total_duration})"
+            )
+
+        normalized["sections"] = normalized_sections
+        return normalized, violations
+
+    def _validate_index_list(self, field_name: str, value: Any, line_count: int, allow_empty: bool = False) -> List[int]:
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list of integers")
+        normalized: List[int] = []
+        seen = set()
+        for item in value:
+            if not isinstance(item, int):
+                raise ValueError(f"{field_name} must contain only integers")
+            if not (0 <= item < line_count):
+                raise ValueError(f"{field_name} index out of range: {item}")
+            if item in seen:
+                raise ValueError(f"{field_name} contains duplicate index: {item}")
+            seen.add(item)
+            normalized.append(item)
+        if not allow_empty and not normalized:
+            raise ValueError(f"{field_name} must not be empty")
+        return normalized
+
+    def _validate_single_index(self, field_name: str, value: Any, line_count: int) -> int:
+        if not isinstance(value, int):
+            raise ValueError(f"{field_name} must be an integer")
+        if not (0 <= value < line_count):
+            raise ValueError(f"{field_name} index out of range: {value}")
+        return value
+
+    def _max_new_terms_per_section(self) -> int:
+        parsed_profile = getattr(self.user_profile, "parsed_profile", {}) or {}
+        stage2_guidance = parsed_profile.get("stage2_storyboard_guidance", {}) or {}
+        value = stage2_guidance.get("max_new_terms_per_section", 3)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 3
+        return parsed if parsed > 0 else 3
+
+    def _build_storyboard_retry_prompt(
+        self,
+        base_prompt: str,
+        raw_content: str,
+        violations: List[str],
+        invalid_section_ids: Optional[List[str]] = None,
+    ) -> str:
+        violations_json = json.dumps(violations, ensure_ascii=False, indent=2)
+        section_note = ""
+        if invalid_section_ids:
+            section_note = (
+                "Only the following sections need to be corrected; keep all other valid sections logically unchanged: "
+                + ", ".join(invalid_section_ids)
+                + "\n"
+            )
+        return (
+            f"{base_prompt}\n\n"
+            "The previous storyboard output was rejected by runtime validation.\n"
+            f"{section_note}"
+            "Fix the violations below and regenerate the FULL JSON storyboard.\n"
+            "Do not explain anything. Return JSON only.\n\n"
+            f"Validation violations:\n{violations_json}\n\n"
+            f"Previous output:\n{raw_content}"
+        )
+
+    def _validate_storyboard_data(self, storyboard_data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str], List[str]]:
+        violations: List[str] = []
+        invalid_section_ids: List[str] = []
+        sections = storyboard_data.get("sections")
+        if not isinstance(sections, list) or not sections:
+            return {"sections": []}, ["top-level field 'sections' must be a non-empty list"], []
+
+        max_new_terms = self._max_new_terms_per_section()
+        normalized_sections: List[Dict[str, Any]] = []
+        for index, section in enumerate(sections):
+            section_id = f"section_{index}"
+            if isinstance(section, dict) and str(section.get("id", "")).strip():
+                section_id = str(section.get("id")).strip()
+            section_errors: List[str] = []
+            if not isinstance(section, dict):
+                violations.append(f"sections[{index}] must be an object")
+                invalid_section_ids.append(section_id)
+                continue
+
+            normalized_section: Dict[str, Any] = {"id": section_id}
+            try:
+                normalized_section["title"] = self._coerce_non_empty_str(section.get("title"))
+            except ValueError:
+                section_errors.append("title must be a non-empty string")
+
+            lecture_lines_raw = section.get("lecture_lines")
+            if not isinstance(lecture_lines_raw, list) or not lecture_lines_raw:
+                section_errors.append("lecture_lines must be a non-empty list")
+                lecture_lines: List[str] = []
+            else:
+                lecture_lines = []
+                for line in lecture_lines_raw:
+                    text = str(line).strip()
+                    if text:
+                        lecture_lines.append(text)
+                if not lecture_lines:
+                    section_errors.append("lecture_lines must contain non-empty strings")
+            normalized_section["lecture_lines"] = lecture_lines
+
+            animations_raw = section.get("animations")
+            if not isinstance(animations_raw, list) or not animations_raw:
+                section_errors.append("animations must be a non-empty list")
+                normalized_section["animations"] = []
+            else:
+                normalized_section["animations"] = [str(item).strip() for item in animations_raw if str(item).strip()]
+                if not normalized_section["animations"]:
+                    section_errors.append("animations must contain non-empty strings")
+
+            estimated_duration = section.get("estimated_duration")
+            if not isinstance(estimated_duration, int) or estimated_duration <= 0:
+                section_errors.append("estimated_duration must be a positive integer")
+            else:
+                normalized_section["estimated_duration"] = estimated_duration
+
+            line_count = len(lecture_lines)
+            if line_count:
+                try:
+                    normalized_section["highlight_groups"] = self._normalize_highlight_groups(
+                        lecture_lines,
+                        section.get("highlight_groups"),
+                    )
+                except ValueError as exc:
+                    section_errors.append(str(exc))
+                    normalized_section["highlight_groups"] = self._build_default_highlight_groups(lecture_lines)
+
+                try:
+                    normalized_section["evidence_lines_indices"] = self._validate_index_list(
+                        "evidence_lines_indices",
+                        section.get("evidence_lines_indices"),
+                        line_count,
+                        allow_empty=False,
+                    )
+                except ValueError as exc:
+                    section_errors.append(str(exc))
+                    normalized_section["evidence_lines_indices"] = []
+
+                try:
+                    normalized_section["zpd_check_line_index"] = self._validate_single_index(
+                        "zpd_check_line_index",
+                        section.get("zpd_check_line_index"),
+                        line_count,
+                    )
+                except ValueError as exc:
+                    section_errors.append(str(exc))
+                    normalized_section["zpd_check_line_index"] = 0
+
+                try:
+                    normalized_section["bridge_line_index"] = self._validate_single_index(
+                        "bridge_line_index",
+                        section.get("bridge_line_index"),
+                        line_count,
+                    )
+                except ValueError as exc:
+                    section_errors.append(str(exc))
+                    normalized_section["bridge_line_index"] = max(0, line_count - 1)
+
+                if section.get("zpd_check_line_index") not in (0, None):
+                    section_errors.append("zpd_check_line_index should point to the first lecture line")
+                if isinstance(section.get("bridge_line_index"), int) and section.get("bridge_line_index") < max(0, line_count - 2):
+                    section_errors.append("bridge_line_index should occur near the end of the section")
+
+                new_terms = section.get("new_terms_introduced")
+                if not isinstance(new_terms, list):
+                    section_errors.append("new_terms_introduced must be a list")
+                    normalized_section["new_terms_introduced"] = []
+                else:
+                    normalized_section["new_terms_introduced"] = [str(item).strip() for item in new_terms if str(item).strip()]
+                    if len(normalized_section["new_terms_introduced"]) > max_new_terms:
+                        section_errors.append(
+                            f"new_terms_introduced exceeds max_new_terms_per_section ({max_new_terms})"
+                        )
+            else:
+                normalized_section["highlight_groups"] = []
+                normalized_section["evidence_lines_indices"] = []
+                normalized_section["zpd_check_line_index"] = 0
+                normalized_section["bridge_line_index"] = 0
+                normalized_section["new_terms_introduced"] = []
+
+            normalized_sections.append(normalized_section)
+            if section_errors:
+                invalid_section_ids.append(section_id)
+                violations.extend([f"{section_id}: {error}" for error in section_errors])
+
+        return {"sections": normalized_sections}, violations, invalid_section_ids
+
 
     def _fallback_trim_sections_by_duration(self, sections: List[Section], target_minutes: int) -> List[Section]:
         target_seconds = max(0, int(target_minutes) * 60)
@@ -831,6 +1459,9 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
             print("📂 正在读取大纲...")
             with open(outline_file, "r", encoding="utf-8") as f:
                 outline_data = json.load(f)
+            outline_data, outline_violations = self._validate_outline_data(outline_data)
+            if outline_violations:
+                raise ValueError(f"Cached outline failed validation: {'; '.join(outline_violations)}")
         else:
             """Step 1: Generate teaching outline from topic"""
             refer_img_path = (
@@ -848,13 +1479,17 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
             )
 
             print(f"📝 正在生成大纲...")
+            retry_prompt = prompt1
+            outline_data = None
+            last_validation_errors: List[str] = []
+            validation_retry_limit = 3
 
-            for attempt in range(1, self.max_regenerate_tries + 1):
+            for attempt in range(1, validation_retry_limit + 1):
                 api_func = self._request_api_and_track_tokens if refer_img_path else self._request_api_and_track_tokens
-                response = api_func(prompt1, max_tokens=self.max_code_token_length)
+                response = api_func(retry_prompt, max_tokens=self.max_code_token_length)
                 if response is None:
                     print(f"⚠️ 第 {attempt} 次尝试失败，正在重试...")
-                    if attempt == self.max_regenerate_tries:
+                    if attempt == validation_retry_limit:
                         raise ValueError("API 请求多次失败")
                     continue
                 try:
@@ -864,21 +1499,49 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
                         content = response.choices[0].message.content
                     except Exception:
                         content = str(response)
-                content = extract_json_from_markdown(content)
                 try:
-                    outline_data = json.loads(content)
-                    with open(self.output_dir / "outline.json", "w", encoding="utf-8") as f:
-                        json.dump(outline_data, f, ensure_ascii=False, indent=2)
-                    break
+                    extracted_content = self._extract_outline_json(content)
+                    parsed_outline = json.loads(extracted_content)
                 except json.JSONDecodeError:
                     print(f"⚠️ 第 {attempt} 次尝试大纲格式无效，正在重试...")
-                    if attempt == self.max_regenerate_tries:
+                    retry_prompt = self._build_outline_retry_prompt(
+                        prompt1,
+                        content,
+                        ["Output must be valid JSON parseable by Python json.loads()."],
+                    )
+                    if attempt == validation_retry_limit:
                         raise ValueError("大纲格式多次无效，请检查提示词或 API 响应")
+                    continue
+
+                normalized_outline, validation_errors = self._validate_outline_data(parsed_outline)
+                if validation_errors:
+                    last_validation_errors = validation_errors
+                    print(f"⚠️ 第 {attempt} 次尝试大纲结构校验失败，正在重试...")
+                    retry_prompt = self._build_outline_retry_prompt(prompt1, extracted_content, validation_errors)
+                    if attempt == validation_retry_limit:
+                        outline_data, _ = self._apply_outline_fallbacks(parsed_outline, validation_errors)
+                        with open(self.output_dir / "outline.json", "w", encoding="utf-8") as f:
+                            json.dump(outline_data, f, ensure_ascii=False, indent=2)
+                        break
+                    continue
+
+                outline_data = normalized_outline
+                with open(self.output_dir / "outline.json", "w", encoding="utf-8") as f:
+                    json.dump(outline_data, f, ensure_ascii=False, indent=2)
+                break
+
+            if outline_data is None:
+                if last_validation_errors:
+                    raise ValueError("大纲结构多次无效: " + "; ".join(last_validation_errors))
+                raise ValueError("大纲生成失败")
 
         self.outline = TeachingOutline(
             topic=outline_data["topic"],
             target_audience=outline_data["target_audience"],
             sections=outline_data["sections"],
+            factuality_anchor_checklist=outline_data.get("factuality_anchor_checklist"),
+            scaffold_map=outline_data.get("scaffold_map"),
+            difficulty_level=outline_data.get("difficulty_level"),
         )
         print(f"== 大纲已生成: {self.outline.topic}")
         return self.outline
@@ -899,6 +1562,9 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
             print("📂 发现分镜脚本，正在加载...")
             with open(storyboard_file, "r", encoding="utf-8") as f:
                 storyboard_data = json.load(f)
+            storyboard_data, storyboard_violations, _ = self._validate_storyboard_data(storyboard_data)
+            if storyboard_violations:
+                raise ValueError(f"Cached storyboard failed validation: {'; '.join(storyboard_violations)}")
             if self.use_assets:
                 self.enhanced_storyboard = self._enhance_storyboard_with_assets(storyboard_data)
             else:
@@ -919,12 +1585,17 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
                 subject=self.subject,
             )
 
-            for attempt in range(1, self.max_regenerate_tries + 1):
+            retry_prompt = prompt2
+            storyboard_data = None
+            last_validation_errors: List[str] = []
+            invalid_section_ids: List[str] = []
+            validation_retry_limit = 3
+            for attempt in range(1, validation_retry_limit + 1):
                 api_func = self._request_api_and_track_tokens
-                response = api_func(prompt2, max_tokens=self.max_code_token_length)
+                response = api_func(retry_prompt, max_tokens=self.max_code_token_length)
                 if response is None:
                     print(f"⚠️ 第 {attempt} 次尝试 API 请求失败，正在重试...")
-                    if attempt == self.max_regenerate_tries:
+                    if attempt == validation_retry_limit:
                         raise ValueError("API 请求多次失败")
                     continue
 
@@ -938,27 +1609,62 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
 
                 try:
                     json_str = extract_json_from_markdown(content)
-                    storyboard_data = json.loads(json_str)
-
-                    # Save original storyboard
-                    with open(storyboard_file, "w", encoding="utf-8") as f:
-                        json.dump(storyboard_data, f, ensure_ascii=False, indent=2)
-
-                    # Enhance storyboard (add assets)
-                    if self.use_assets:
-                        self.enhanced_storyboard = self._enhance_storyboard_with_assets(storyboard_data)
-                    else:
-                        self.enhanced_storyboard = storyboard_data
-                    break
-
+                    parsed_storyboard = json.loads(json_str)
                 except json.JSONDecodeError as e:
                     print(f"⚠️ 第 {attempt} 次尝试分镜格式无效，正在重试...")
                     print(f"❌ JSON Error: {e}")
-                    print(f"❌ Content snippet: {content[:1000]}...") 
-                    if attempt == self.max_regenerate_tries:
+                    print(f"❌ Content snippet: {content[:1000]}...")
+                    retry_prompt = self._build_storyboard_retry_prompt(
+                        prompt2,
+                        content,
+                        ["Output must be valid JSON parseable by Python json.loads()."],
+                    )
+                    if attempt == validation_retry_limit:
                         raise ValueError("分镜格式多次无效，请检查提示词或 API 响应")
+                    continue
 
-        # Parse into Section objects (using enhanced storyboard)
+                normalized_storyboard, validation_errors, invalid_section_ids = self._validate_storyboard_data(parsed_storyboard)
+                if validation_errors:
+                    last_validation_errors = validation_errors
+                    print(f"⚠️ 第 {attempt} 次尝试分镜结构校验失败，正在重试...")
+                    retry_prompt = self._build_storyboard_retry_prompt(
+                        prompt2,
+                        json_str,
+                        validation_errors,
+                        invalid_section_ids=invalid_section_ids,
+                    )
+                    if attempt == validation_retry_limit:
+                        storyboard_data, _ = self._apply_storyboard_fallbacks(parsed_storyboard, validation_errors)
+                        with open(storyboard_file, "w", encoding="utf-8") as f:
+                            json.dump(storyboard_data, f, ensure_ascii=False, indent=2)
+                        if self.use_assets:
+                            self.enhanced_storyboard = self._enhance_storyboard_with_assets(storyboard_data)
+                        else:
+                            self.enhanced_storyboard = storyboard_data
+                        break
+                    continue
+
+                storyboard_data = normalized_storyboard
+
+                with open(storyboard_file, "w", encoding="utf-8") as f:
+                    json.dump(storyboard_data, f, ensure_ascii=False, indent=2)
+
+                if self.use_assets:
+                    self.enhanced_storyboard = self._enhance_storyboard_with_assets(storyboard_data)
+                else:
+                    self.enhanced_storyboard = storyboard_data
+                break
+
+            if storyboard_data is None:
+                if last_validation_errors:
+                    raise ValueError("分镜结构多次无效: " + "; ".join(last_validation_errors))
+                raise ValueError("分镜生成失败")
+
+        normalized_enhanced_storyboard, enhanced_violations, _ = self._validate_storyboard_data(self.enhanced_storyboard)
+        if enhanced_violations:
+            raise ValueError("增强后的分镜不合法: " + "; ".join(enhanced_violations))
+        self.enhanced_storyboard = normalized_enhanced_storyboard
+
         self.sections = []
         for section_data in self.enhanced_storyboard["sections"]:
             lecture_lines, highlight_groups = self._prepare_section_lecture_lines(
@@ -970,8 +1676,12 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_2"].
                 title=section_data["title"],
                 lecture_lines=lecture_lines,
                 animations=section_data["animations"],
-                estimated_duration=section_data.get("estimated_duration"),  # 解析预计时长
+                estimated_duration=section_data.get("estimated_duration"),
                 highlight_groups=highlight_groups,
+                evidence_lines_indices=section_data.get("evidence_lines_indices"),
+                zpd_check_line_index=section_data.get("zpd_check_line_index"),
+                bridge_line_index=section_data.get("bridge_line_index"),
+                new_terms_introduced=section_data.get("new_terms_introduced"),
             )
             self.sections.append(section)
 
@@ -1637,27 +2347,61 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                 data = json.loads(feedback_content)
             except json.JSONDecodeError:
                 print(f"⚠️ {self.learning_topic} Stage5 评分 JSON 解析失败，跳过 good-enough 判定")
-                return False, None, None, []
+                return False, None, None, [], []
 
             scores = {
                 "element_layout": float((data.get("element_layout") or {}).get("score", 0) or 0),
                 "overall_score": float(data.get("overall_score", 0) or 0),
                 "attractiveness": float((data.get("attractiveness") or {}).get("score", 0) or 0),
                 "visual_consistency": float((data.get("visual_consistency") or {}).get("score", 0) or 0),
+                "logic_flow": float((data.get("logic_flow") or {}).get("score", 0) or 0),
+                "accuracy_depth": float((data.get("accuracy_depth") or {}).get("score", 0) or 0),
+                "learner_fit_zpd": float((data.get("learner_fit_zpd") or {}).get("score", 0) or 0),
+                "unsupported_claim_count": float((data.get("accuracy_depth") or {}).get("unsupported_claim_count", 0) or 0),
             }
             hard_blockers = [str(item).strip() for item in (data.get("hard_blockers") or []) if str(item).strip()]
+            critical_failures = [str(item).strip() for item in (data.get("critical_failures") or []) if str(item).strip()]
             prompt_decision = bool(data.get("is_good_enough", False))
             reason = str(data.get("good_enough_reason", "")).strip() or None
             average_visual_score = (
                 scores["element_layout"] + scores["attractiveness"] + scores["visual_consistency"]
             ) / 3
             meets_threshold = (
-                scores["element_layout"] >= 15
-                and scores["overall_score"] >= 78
-                and average_visual_score >= 15
+                scores["element_layout"] >= 12
+                and scores["overall_score"] >= 76
+                and average_visual_score >= 12
+                and scores["logic_flow"] >= 13
+                and scores["accuracy_depth"] >= 13
+                and scores["learner_fit_zpd"] >= 13
+                and scores["unsupported_claim_count"] == 0
             )
-            is_good_enough = (prompt_decision or meets_threshold) and not hard_blockers
-            return is_good_enough, reason, scores, hard_blockers
+            is_good_enough = (prompt_decision or meets_threshold) and not hard_blockers and not critical_failures
+            if not reason and critical_failures:
+                reason = "; ".join(critical_failures)
+
+            pedagogy_improvements = []
+            if scores["unsupported_claim_count"] > 0:
+                pedagogy_improvements.append(
+                    f"[PEDAGOGY] Remove or justify unsupported factual claims. Unsupported claim count: {int(scores['unsupported_claim_count'])}."
+                )
+            if scores["learner_fit_zpd"] < 13:
+                pedagogy_improvements.append(
+                    "[PEDAGOGY] Improve learner fit: simplify unexplained jargon, reduce new-term load, and connect from prior knowledge."
+                )
+            if scores["logic_flow"] < 13:
+                pedagogy_improvements.append(
+                    "[PEDAGOGY] Improve scaffolding: strengthen transitions, ensure one core new concept per section, and add clearer bridge lines."
+                )
+            if scores["accuracy_depth"] < 13:
+                pedagogy_improvements.append(
+                    "[PEDAGOGY] Improve accuracy and depth: anchor key claims in named definitions, laws, theorems, experiments, or worked-example rules."
+                )
+            for item in hard_blockers:
+                pedagogy_improvements.append(f"[PEDAGOGY] Resolve hard blocker: {item}")
+            for item in critical_failures:
+                pedagogy_improvements.append(f"[PEDAGOGY] Resolve critical failure: {item}")
+
+            return is_good_enough, reason, scores, hard_blockers + critical_failures, pedagogy_improvements
 
         try:
             response = request_gemini_video_img(prompt=analysis_prompt, video_path=video_path, image_path=self.GRID_IMG_PATH)
@@ -1670,9 +2414,11 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                 image_path=self.GRID_IMG_PATH,
             )
             evaluation_content = extract_answer_from_response(evaluation_response)
-            is_good_enough, good_enough_reason, evaluation_scores, hard_blockers = _parse_stage5_evaluation(
+            is_good_enough, good_enough_reason, evaluation_scores, hard_blockers, pedagogy_improvements = _parse_stage5_evaluation(
                 evaluation_content
             )
+            if pedagogy_improvements:
+                suggested_improvements = pedagogy_improvements + suggested_improvements
             if has_layout_issues or hard_blockers:
                 is_good_enough = False
 
@@ -1686,7 +2432,7 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
             feedback = VideoFeedback(
                 section_id=section.id,
                 video_path=video_path,
-                has_issues=has_layout_issues,
+                has_issues=has_layout_issues or bool(pedagogy_improvements),
                 suggested_improvements=suggested_improvements,
                 raw_response=raw_response,
                 is_good_enough=is_good_enough,
