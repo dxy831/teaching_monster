@@ -32,6 +32,56 @@ TTS_SYNTHESIS_MAX_WORKERS = int(os.getenv("TTS_SYNTHESIS_MAX_WORKERS", "32"))
 TTS_MODELS = ["tts-1", "tts-1-1106"]
 TTS_MODEL_MAX_WORKERS = 16  # 每个模型的最大并发数（总共32并发）
 
+# ── Terminology Dictionary for Instant Definitions ──────────────────
+# 用于在术语首次出现时自动插入定义，减少适配度评分中的术语密度惩罚
+TERMINOLOGY_DICT = {
+    "biology": {
+        "heuristic": "rule-driven approach",
+        "inference engine": "reasoning system",
+        "translocation": "two-way transport",
+        "lignin": "rigid cell wall material",
+        "meiosis": "cell division that produces sex cells",
+        "chromosome": "DNA package",
+        "polyploidy": "chromosome doubling",
+        "2n": "diploid number, meaning two sets of chromosomes",
+        "gamete": "sex cell like sperm or egg",
+        "zygote": "fertilized egg cell",
+        "allele": "gene variant",
+        "phenotype": "observable trait",
+        "genotype": "genetic makeup",
+    },
+    "math": {
+        "marginal": "step-by-step change",
+        "tangent line": "flat line touching the curve",
+        "vertex": "highest or lowest point",
+        "derivative": "rate of change",
+        "integral": "accumulated sum",
+        "asymptote": "line the curve approaches but never touches",
+        "inflection point": "where the curve changes from bending up to bending down",
+    },
+    "statistics": {
+        "mse": "Mean Squared Error",
+        "ridge": "penalty method that shrinks coefficients",
+        "lasso": "penalty method that zeros out coefficients",
+        "homoscedasticity": "equal variance",
+        "heteroscedasticity": "unequal variance",
+        "multicollinearity": "when predictors are highly correlated",
+        "residual": "prediction error",
+    },
+    "physics": {
+        "kinematic": "motion-related",
+        "invariant": "unchanging quantity",
+        "momentum": "mass times velocity",
+        "inertia": "resistance to motion change",
+    },
+    "computer_science": {
+        "heuristic": "rule of thumb",
+        "inference": "logical reasoning",
+        "algorithm": "step-by-step procedure",
+        "recursion": "function calling itself",
+    }
+}
+
 
 def extract_response_text(response) -> str:
     try:
@@ -120,6 +170,59 @@ def _is_overview_screen_text(screen_text: str) -> bool:
     return False
 
 
+def _detect_and_define_terms(text: str, subject: str, grade_level: str) -> str:
+    """
+    检测文本中的专业术语并返回定义提示
+
+    该函数扫描屏幕文本，识别需要定义的术语，并根据年级水平生成相应的定义插入指令。
+    这是减少适配度评分中"术语密度惩罚"的核心机制。
+
+    Args:
+        text: 屏幕文本内容
+        subject: 学科领域 (biology, math, statistics, physics, computer_science)
+        grade_level: 年级水平 (middle_school, high_school, ap_college)
+
+    Returns:
+        术语定义提示字符串，如果没有检测到术语则返回空字符串
+
+    Example:
+        >>> _detect_and_define_terms("The marginal cost increases", "math", "high_school")
+        "- When you say 'marginal', add: '(step-by-step change)'"
+    """
+    subject_terms = TERMINOLOGY_DICT.get(subject, {})
+    if not subject_terms:
+        return ""
+
+    found_terms = []
+    text_lower = text.lower()
+
+    # 按术语长度降序排序，优先匹配长术语（避免"inference engine"被"inference"覆盖）
+    sorted_terms = sorted(subject_terms.items(), key=lambda x: len(x[0]), reverse=True)
+
+    for term, definition in sorted_terms:
+        if term.lower() in text_lower:
+            # 根据年级调整定义插入方式
+            if grade_level == "middle_school":
+                # 初中：完整句子解释
+                found_terms.append(
+                    f"- When you say '{term}', immediately add: 'which means {definition}'"
+                )
+            elif grade_level == "high_school":
+                # 高中：括号内简短定义
+                found_terms.append(
+                    f"- When you say '{term}', add: '({definition})'"
+                )
+            else:  # ap_college
+                # 大学/AP：更自然的定义方式
+                found_terms.append(
+                    f"- When you say '{term}', briefly add: 'that is, {definition}'"
+                )
+
+    if found_terms:
+        return "\n".join(found_terms)
+    return ""
+
+
 def expand_screen_text_to_spoken_script(
     screen_text: str,
     api_func: Callable,
@@ -172,6 +275,11 @@ def expand_screen_text_to_spoken_script(
 - Example: "marginal gain, which means the extra benefit from one more unit"
 - Example: "the tangent line, which is the flat line touching the curve at that point"
 """
+
+    # 新增：自动检测术语并生成定义插入指令
+    terminology_hints = _detect_and_define_terms(screen_text, subject, grade_level)
+    if terminology_hints:
+        terminology_instruction += f"\n\n**Detected Terms - Add Definitions (MANDATORY):**\n{terminology_hints}"
 
     # 概述部分使用带范例引导的特殊提示词
     if _is_overview_screen_text(screen_text):
