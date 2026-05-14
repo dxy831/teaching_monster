@@ -118,6 +118,33 @@ def get_prompt2_storyboard(
     - **Implementation:** Add the transition as a separate lecture_line BEFORE the line that introduces the formula
     - **Why this matters:** Abrupt formula appearance causes "math symbol penalty" in adaptability scoring. A 1-sentence buffer reduces cognitive friction.
 
+    # 🔴 Cognitive Checkpoint Protocol (MANDATORY — Reduce Digestion Time Penalty)
+
+    **After introducing a key new concept, add a cognitive checkpoint lecture_line:**
+    - **Key concept** = The main new idea in each section (identified in outline's `new_concept` field)
+    - **Checkpoint placement**: After explaining the concept but before moving to examples or next topic
+    - **Checkpoint types** (AI chooses based on context):
+      - Reflection prompt: "Think about how this connects to what we learned earlier"
+      - Comprehension check: "Make sure this makes sense before we continue"
+      - Application prompt: "Consider where you might use this in practice"
+      - Consolidation: "Let's take a moment to absorb this key idea"
+      - Preview connection: "Keep this in mind as we move to the next part"
+    - **Subject-specific checkpoints:**
+      - Math/Physics: "Verify this step makes sense" or "Check the units"
+      - Biology: "Visualize this structure" or "Think about the function"
+      - Statistics: "Consider what this metric tells us"
+      - Computer Science: "Trace through this logic" or "Think about edge cases"
+    - **Examples:**
+      - After explaining meiosis: "Take a moment to visualize this process in your mind"
+      - After marginal thinking: "Think about how this applies to decisions you make daily"
+      - After Ridge regression: "Consider why we need this penalty term"
+    - **Duration consideration:** Checkpoint lecture_lines should be 5-8 words (2-3 seconds) — not too long (avoid breaking flow), not too short (must allow mental processing time)
+    - **Frequency control:** ONE checkpoint per section maximum (don't overuse). Only add checkpoints for genuinely complex concepts. Simple definitions or examples don't need checkpoints. If a section is already short (< 30 seconds), skip the checkpoint.
+    - **Coordination with ZPD pacing:** Checkpoints should NOT conflict with `zpd_check_line_index` (prior knowledge activation). Place checkpoints AFTER concept explanation, not at the beginning. Use `bridge_line_index` to identify natural checkpoint positions.
+    - **Implementation:** Add the checkpoint as a separate lecture_line AFTER the concept explanation
+    - **Why this matters:** Abrupt topic transitions cause "digestion time penalty" in adaptability scoring. A brief cognitive pause reduces cognitive overload and improves retention.
+    - **Verification:** Each video should have 2-4 checkpoints total (not per section). Checkpoints should be clearly identifiable as reflection/pause language.
+
     # 🔴 Factual Accuracy & Multimodal Consistency (MANDATORY — Competition Standard)
 
     - Every formula, constant, term, or process shown on screen MUST exactly match the corresponding lecture_line narration. No discrepancy is allowed.
