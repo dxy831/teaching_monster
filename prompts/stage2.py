@@ -100,6 +100,24 @@ def get_prompt2_storyboard(
     - High school: "The ball accelerates at 9.8 m/s² downward" (not "The ball's velocity vector undergoes uniform temporal differentiation")
     - AP/College: "The ball experiences constant gravitational acceleration g ≈ 9.8 m/s²" (technical terms OK, but define on first use)
 
+    # 🔴 Formula Introduction Protocol (MANDATORY — Reduce Cognitive Friction)
+
+    **Before introducing complex formulas, add a transition lecture_line:**
+    - **Complex formula** = LaTeX with Greek letters (α, β, Σ, π), summation symbols (Σ), fractions, or 3+ variables
+    - **Transition phrases** (choose one that fits context):
+      - "Let's express this mathematically"
+      - "The formula looks like this"
+      - "Mathematically, we can write"
+      - "In equation form"
+      - "The mathematical representation is"
+    - **Examples:**
+      - Before MSE formula: "Now, let's see the mathematical form of Mean Squared Error"
+      - Before Ridge/Lasso penalty: "We add a penalty term to the equation"
+      - Before chromosome notation: "In genetic notation, we write this as"
+      - Before derivative formula: "Let's express the rate of change mathematically"
+    - **Implementation:** Add the transition as a separate lecture_line BEFORE the line that introduces the formula
+    - **Why this matters:** Abrupt formula appearance causes "math symbol penalty" in adaptability scoring. A 1-sentence buffer reduces cognitive friction.
+
     # 🔴 Factual Accuracy & Multimodal Consistency (MANDATORY — Competition Standard)
 
     - Every formula, constant, term, or process shown on screen MUST exactly match the corresponding lecture_line narration. No discrepancy is allowed.
