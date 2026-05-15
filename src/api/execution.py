@@ -348,7 +348,7 @@ def _call_result(hooks: Optional[ExecutionHooks], message: str, data: Dict[str, 
 
 
 def resolve_api_func(api_model: Optional[str]):
-    return API_MAPPING.get(api_model or settings.default_api, request_claude_token)
+    return API_MAPPING.get(api_model or settings.default_api, request_gpt5_token)
 
 
 def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
@@ -462,7 +462,7 @@ def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
             max_regenerate_tries=3,
             max_feedback_gen_code_tries=2,
             max_mllm_fix_bugs_tries=2,
-            feedback_rounds=2,
+            feedback_rounds=1,
         )
 
         folder_path = Path(request_data.get("output_dir") or (output_root / f"API_{api_model}"))
@@ -505,7 +505,7 @@ def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
             raise
 
         token = _call_stage_start(hooks, "render_videos", "正在渲染视频片段。")
-        pivot_deadline = task_start_time + 1785
+        pivot_deadline = task_start_time + 1620
         fallback_mode = False
         merged_section_ids: set[str] = set()
         try:
@@ -518,7 +518,7 @@ def execute_video_generation(context: ExecutionContext) -> Dict[str, Any]:
             if fallback_mode:
                 scanned_section_videos = agent._discover_fallback_section_videos()
                 agent.section_videos = dict(scanned_section_videos)
-                _call_stage_finish(hooks, token, "已到 29 分 45 秒保底截止，停止等待剩余片段并进入合并。")
+                _call_stage_finish(hooks, token, "已到 27 分钟保底截止，停止等待剩余片段并进入合并。")
             else:
                 scanned_section_videos = agent._discover_completed_section_videos()
                 if scanned_section_videos:

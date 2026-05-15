@@ -28,7 +28,7 @@ class Settings:
     oss_access_key_secret: str = ""
     oss_key_prefix: str = "competition-outputs"
     oss_url_expire_seconds: int = 172800
-    default_api: str = "claude"
+    default_api: str = "gpt5"
     default_duration: int = 5
     default_language: str = "Python"
     debug: bool = False

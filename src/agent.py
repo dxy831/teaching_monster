@@ -130,7 +130,7 @@ class RunConfig:
     use_feedback: bool = True
     use_assets: bool = True
     api: Callable = None
-    feedback_rounds: int = 2
+    feedback_rounds: int = 1
     iconfinder_api_key: str = ""
     max_code_token_length: int = 30000
     max_fix_bug_tries: int = 3
@@ -733,11 +733,11 @@ Use these rules when deciding:
 
 Example:
 - Simple topic + strong foundation -> choose a shorter duration, such as 2 or 3 minutes.
-- More complex topic + weaker foundation -> choose a longer duration, such as 5 or 6 minutes.
+- More complex topic + weaker foundation -> choose a longer duration, such as 4 or 5 minutes.
 
 Constraints:
 - Must be an integer
-- Must be between 3 and 6 inclusive
+- Must be between 3 and 5 inclusive
 
 Return only one integer number.
 """
@@ -2771,7 +2771,7 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                                 if sid not in results:
                                     results[sid] = video_path
                                     successful_count += 1
-                            print("⏰ 已到 29 分 45 秒保底截止，停止等待剩余渲染任务")
+                            print("⏰ 已到 27 分钟保底截止，停止等待剩余渲染任务")
                             break
                         timeout = min(float(section_timeout), remaining)
 
@@ -2786,7 +2786,7 @@ Return ONLY a JSON array of section IDs, e.g. ["section_1", "section_3", "sectio
                             if sid not in results:
                                 results[sid] = video_path
                                 successful_count += 1
-                        print("⏰ 已到 29 分 45 秒保底截止，立即扫描已落盘片段并进入视频合并")
+                        print("⏰ 已到 27 分钟保底截止，立即扫描已落盘片段并进入视频合并")
                         break
 
                     for future in done_futures:
@@ -3025,7 +3025,7 @@ def build_and_parse_args(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--competition", action="store_true", default=False)
     parser.add_argument("--json", action="store_true", default=False)
-    parser.add_argument("--api-model", dest="api_model", type=str, default="claude")
+    parser.add_argument("--api-model", dest="api_model", type=str, default="gpt5")
     parser.add_argument("--knowledge-point", dest="knowledge_point", type=str, default=None)
     parser.add_argument("--age", type=int, default=None)
     parser.add_argument("--gender", type=str, default=None)
@@ -3054,7 +3054,7 @@ def build_and_parse_args(argv=None):
     parser.add_argument("--max_regenerate_tries", type=int, default=10)
     parser.add_argument("--max_feedback_gen_code_tries", type=int, default=3)
     parser.add_argument("--max_mllm_fix_bugs_tries", type=int, default=3)
-    parser.add_argument("--feedback_rounds", type=int, default=2)
+    parser.add_argument("--feedback_rounds", type=int, default=1)
     parser.add_argument("--max_video_seconds", type=int, default=600)
     parser.add_argument("--pipeline_budget_seconds", type=int, default=1800)
     parser.add_argument("--render_timeout_seconds", type=int, default=600)
